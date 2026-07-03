@@ -71,8 +71,12 @@ export async function applyVerdict(
         await postSlack(config.slack, `:hourglass: PR #${pr}: REQUEST_CHANGES su GitHub ma agent occupato — retry al prossimo tick`);
         return;
       }
+      // Fallimento permanente (agent morto/expired): flagga + marca così non si ri-notifica ogni tick.
+      if (L.enabled) addLabels(config, pr, [L.needsHuman]);
       markReviewed(config.repo, pr, sha);
-      await postSlack(config.slack, `:warning: PR #${pr}: follow-up fallito (${String(error)})`, { mention: true });
+      await postSlack(config.slack, `:warning: PR #${pr}: follow-up fallito (${String(error)}) — flaggata needs-human`, {
+        mention: true,
+      });
     }
     return;
   }
@@ -92,8 +96,21 @@ export async function applyVerdict(
     return;
   }
 
-  approve(config, pr, verdictBody(verdict));
-  mergeAuto(config, pr);
+  try {
+    approve(config, pr, verdictBody(verdict));
+    mergeAuto(config, pr);
+  } catch (error) {
+    // Auto-merge non abilitato / PR non mergeable → NON ri-revieware ogni tick (loop costoso):
+    // marca reviewed + flagga per un umano.
+    setLabels([L.approved, L.needsHuman], [L.rework]);
+    markReviewed(config.repo, pr, sha);
+    await postSlack(
+      config.slack,
+      `:warning: PR #${pr} APPROVE ma approve/merge fallito (${String(error)}) — verifica/mergia a mano`,
+      { mention: true },
+    );
+    return;
+  }
   setLabels([L.approved], [L.rework, L.needsHuman]);
   markReviewed(config.repo, pr, sha);
   await postSlack(config.slack, `:white_check_mark: APPROVE PR #${pr} — auto-merge attivo${attributionSuffix(verdict)}`);

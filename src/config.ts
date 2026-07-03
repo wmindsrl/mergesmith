@@ -23,8 +23,10 @@ export interface ImplementerConfig {
 export interface VerifierConfig {
   provider: string;
   command: string;
-  /** Model override for the review (claude-code: passed as `claude --model`). Omit = CLI default. */
+  /** Model override for the review (claude-code: `claude --model`; cursor-agent: `agent --model`). */
   model?: string;
+  /** Env var for Cursor API key when provider is cursor-agent. Defaults to implementer.apiKeyEnv. */
+  apiKeyEnv?: string;
 }
 
 export interface SlackConfig {
@@ -105,8 +107,13 @@ export function loadConfig(cwd: string = process.cwd()): MergesmithConfig {
     },
     verifier: {
       provider: raw.verifier.provider,
-      command: raw.verifier.command ?? '/validate-pr',
+      command:
+        raw.verifier.command ??
+        (raw.verifier.provider === 'cursor-agent' || raw.verifier.provider === 'cursor'
+          ? '.cursor/commands/mergesmith-validate-pr.md'
+          : '/validate-pr'),
       model: raw.verifier.model,
+      apiKeyEnv: raw.verifier.apiKeyEnv,
     },
     github: { tokenEnv: raw.github?.tokenEnv ?? 'GH_TOKEN_MERGESMITH' },
     contract: { appendix: raw.contract?.appendix ?? 'docs/agents/CONTRACT.md' },

@@ -1,18 +1,13 @@
 // Verifier provider: Claude Code CLI, headless. Runs the review slash command in a fresh
-// session; the command writes a structured Verdict JSON to $MERGESMITH_VERDICT, which we
-// read back. The verifier is "thin": it judges only — the orchestrator (act.ts) does the
-// GitHub actions (approve/merge/followup/labels).
+// session; the command writes mergesmith-verdict.json in the repo root (cwd) — its sandbox
+// blocks env-var reads — which we read+validate back. The verifier is "thin": it judges
+// only; the orchestrator (act.ts) does the GitHub actions.
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, rmSync } from 'node:fs';
 import type { Verdict, VerifierProvider, VerifyInput } from './types.js';
+import { readVerdict, verdictPath } from './verdict.js';
 
 const DEFAULT_TIMEOUT_MS = 1_800_000; // 30 min
-
-// The review runs in a sandbox that blocks env-var reads (and node/bash script execution),
-// so we cannot pass the output path via an env var. The command writes this fixed file in
-// the repo root (cwd) and we read it back from there.
-const VERDICT_FILE = 'mergesmith-verdict.json';
 
 // Settable via alias (left column) or full id. `claude --model` validates at runtime.
 const CLAUDE_MODELS = [
@@ -36,8 +31,9 @@ export function createClaudeCodeProvider(opts: {
     },
 
     async verify(input: VerifyInput): Promise<Verdict> {
-      const out = join(process.cwd(), VERDICT_FILE);
-      if (existsSync(out)) rmSync(out);
+      const cwd = process.cwd();
+      const out = verdictPath(cwd);
+      if (existsSync(out)) rmSync(out); // pre-clean any stale verdict
 
       const args = ['-p', `${opts.command} ${input.prNumber}`, '--permission-mode', 'acceptEdits'];
       if (opts.model) args.push('--model', opts.model);
@@ -45,25 +41,12 @@ export function createClaudeCodeProvider(opts: {
         execFileSync('claude', args, {
           stdio: ['ignore', 'inherit', 'inherit'],
           timeout: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          cwd,
         });
       } catch (error) {
         throw new Error(`verifier claude-code: sessione fallita per PR #${input.prNumber}: ${String(error)}`);
       }
-
-      if (!existsSync(out)) {
-        throw new Error(
-          `verifier claude-code: nessun verdetto prodotto per PR #${input.prNumber} ` +
-            `(${out} assente) — la review non ha scritto ${VERDICT_FILE}`,
-        );
-      }
-      const verdict = JSON.parse(readFileSync(out, 'utf8')) as Verdict;
-      rmSync(out); // cleanup so a stale verdict can't be reused next run
-      if (verdict.decision !== 'APPROVE' && verdict.decision !== 'REQUEST_CHANGES') {
-        throw new Error(`verifier claude-code: decision non valida nel verdetto: ${JSON.stringify(verdict.decision)}`);
-      }
-      verdict.comments ??= [];
-      verdict.attribution = { engine: 'claude-code', ...(opts.model ? { model: opts.model } : {}) };
-      return verdict;
+      return readVerdict(cwd, input.prNumber, 'claude-code', opts.model);
     },
   };
 }

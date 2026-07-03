@@ -23,6 +23,9 @@ export async function tickRepo(config: MergesmithConfig, opts: TickOptions = {})
     if (pr.isDraft) continue;
     const managed = pr.headRefName.startsWith(impl.branchPrefix) || branches.has(pr.headRefName);
     if (!managed) continue;
+    // needs-human = l'umano possiede questa PR: il loop si tira indietro (niente ri-review /
+    // ri-ping a ogni push finché la label non viene rimossa).
+    if (config.labels.enabled && pr.labels.includes(config.labels.needsHuman)) continue;
     if (reviewed[String(pr.number)] === pr.headRefOid) continue;
 
     try {
@@ -82,7 +85,12 @@ async function handleCiRed(
     markReviewed(config.repo, pr, `${sha}:ci-red`);
   } catch (error) {
     if (error instanceof FollowupError && error.kind === 'busy') return; // retry next tick
-    await postSlack(config.slack, `:warning: PR #${pr}: follow-up CI-red fallito (${String(error)})`, { mention: true });
+    // Fallimento permanente (agent morto/expired): flagga + marca così NON si ri-notifica ogni tick.
+    if (config.labels.enabled) addLabels(config, pr, [config.labels.needsHuman]);
+    markReviewed(config.repo, pr, `${sha}:ci-red`);
+    await postSlack(config.slack, `:warning: PR #${pr}: CI rossa e follow-up fallito (${String(error)}) — flaggata needs-human`, {
+      mention: true,
+    });
   }
 }
 

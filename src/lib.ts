@@ -1,6 +1,6 @@
 // Pure, provider-agnostic helpers. No Cursor, no GitHub, no Slack coupling here —
 // those live in providers/, github.ts and slack.ts respectively.
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 export type ImplementerKind = 'composer' | 'claude' | 'manual';
@@ -90,7 +90,10 @@ export function readJson<T>(path: string, fallback: T): T {
   return JSON.parse(readFileSync(path, 'utf8')) as T;
 }
 
+// Atomic write (tmp + rename): a crash or a concurrent reader never sees a truncated file.
 export function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+  const tmp = `${path}.tmp.${process.pid}`;
+  writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
+  renameSync(tmp, path);
 }

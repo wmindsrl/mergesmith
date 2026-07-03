@@ -4,6 +4,7 @@ import { loadEnvVarOptional } from '../lib.js';
 import type { ImplementerProvider, VerifierProvider } from './types.js';
 import { createCursorProvider } from './cursor.js';
 import { createClaudeCodeProvider } from './claude-code.js';
+import { createCursorAgentProvider } from './cursor-agent.js';
 
 export function getImplementer(config: MergesmithConfig): ImplementerProvider {
   switch (config.implementer.provider) {
@@ -28,7 +29,17 @@ export function getVerifier(config: MergesmithConfig): VerifierProvider {
         // MERGESMITH_VERIFIER_MODEL (env or .env.local) overrides the config default — quick swap.
         model: loadEnvVarOptional('MERGESMITH_VERIFIER_MODEL') ?? config.verifier.model,
       });
+    case 'cursor-agent':
+    case 'cursor':
+      return createCursorAgentProvider({
+        command: config.verifier.command,
+        repo: config.repo,
+        apiKeyEnv: config.verifier.apiKeyEnv ?? config.implementer.apiKeyEnv,
+        model: loadEnvVarOptional('MERGESMITH_VERIFIER_MODEL') ?? config.verifier.model,
+      });
     default:
-      throw new Error(`Verifier provider sconosciuto: "${config.verifier.provider}" (disponibili: claude-code)`);
+      throw new Error(
+        `Verifier provider sconosciuto: "${config.verifier.provider}" (disponibili: claude-code, cursor-agent)`,
+      );
   }
 }
