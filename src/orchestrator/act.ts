@@ -50,10 +50,13 @@ export async function applyVerdict(
 
     const ref = refForBranch(config.repo, branch);
     if (!ref) {
+      // Can't drive the REWORK (no implementer agent tracked): flag it for a human
+      // instead of silently marking it done — otherwise the PR deadlocks invisibly.
+      if (L.enabled) addLabels(config, pr, [L.needsHuman]);
       markReviewed(config.repo, pr, sha);
       await postSlack(
         config.slack,
-        `:warning: REQUEST_CHANGES PR #${pr} pubblicato ma nessun agent noto per \`${branch}\` — follow-up manuale`,
+        `:warning: REQUEST_CHANGES PR #${pr} ma nessun agent noto per \`${branch}\` — serve fix manuale (flaggata needs-human)`,
         { mention: true },
       );
       return;

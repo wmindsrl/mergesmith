@@ -69,7 +69,9 @@ async function handleCiRed(
   if (config.labels.enabled) addLabels(config, pr, [config.labels.ciRed]);
   const ref = refForBranch(config.repo, branch);
   if (!ref) {
-    await postSlack(config.slack, `:warning: PR #${pr}: CI rossa ma nessun agent noto per \`${branch}\` — follow-up manuale`, {
+    // No implementer agent tracked → can't send the fix follow-up: flag for a human.
+    if (config.labels.enabled) addLabels(config, pr, [config.labels.needsHuman]);
+    await postSlack(config.slack, `:warning: PR #${pr}: CI rossa ma nessun agent noto per \`${branch}\` — fix manuale (flaggata needs-human)`, {
       mention: true,
     });
     markReviewed(config.repo, pr, `${sha}:ci-red`);
