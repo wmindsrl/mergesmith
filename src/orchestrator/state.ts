@@ -23,9 +23,26 @@ export interface IssueRecord {
   done?: boolean;
 }
 
+export interface ThreadRef {
+  ts: string;
+  channel: string;
+}
+
 export interface StateFile {
   runs: Record<string, RunRecord>;
   issues?: Record<string, IssueRecord>;
+  threads?: Record<string, ThreadRef>;
+}
+
+export function getThread(repo: string, pr: number): ThreadRef | null {
+  return loadState(repo).threads?.[`pr:${pr}`] ?? null;
+}
+
+export function setThread(repo: string, pr: number, ts: string, channel: string): void {
+  const state = loadState(repo);
+  state.threads ??= {};
+  state.threads[`pr:${pr}`] = { ts, channel };
+  saveState(repo, state);
 }
 
 export function recordIssue(repo: string, rec: IssueRecord): void {

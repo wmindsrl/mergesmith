@@ -7,6 +7,7 @@ import { readJson, writeJson } from '../lib.js';
 import { addLabels, ciState, listOpenPRs } from '../github.js';
 import { getImplementer, getVerifier } from '../providers/registry.js';
 import { postSlack } from '../slack.js';
+import { threadedPost } from '../thread.js';
 import { FollowupError, type ImplementerProvider } from '../providers/types.js';
 import { knownBranches, loadReviewed, loadState, markReviewed, refForBranch, saveState } from './state.js';
 import { applyVerdict } from './act.js';
@@ -114,7 +115,7 @@ async function handleCiRed(
   if (!ref) {
     // No implementer agent tracked → can't send the fix follow-up: flag for a human.
     if (config.labels.enabled) addLabels(config, pr, [config.labels.needsHuman]);
-    await postSlack(config.slack, `:warning: PR #${pr}: CI rossa ma nessun agent noto per \`${branch}\` — fix manuale (flaggata needs-human)`, {
+    await threadedPost(config, pr, `:warning: PR #${pr}: CI rossa ma nessun agent noto per \`${branch}\` — fix manuale (flaggata needs-human)`, {
       mention: true,
     });
     markReviewed(config.repo, pr, `${sha}:ci-red`);
@@ -128,7 +129,7 @@ async function handleCiRed(
     // Fallimento permanente (agent morto/expired): flagga + marca così NON si ri-notifica ogni tick.
     if (config.labels.enabled) addLabels(config, pr, [config.labels.needsHuman]);
     markReviewed(config.repo, pr, `${sha}:ci-red`);
-    await postSlack(config.slack, `:warning: PR #${pr}: CI rossa e follow-up fallito (${String(error)}) — flaggata needs-human`, {
+    await threadedPost(config, pr, `:warning: PR #${pr}: CI rossa e follow-up fallito (${String(error)}) — flaggata needs-human`, {
       mention: true,
     });
   }
