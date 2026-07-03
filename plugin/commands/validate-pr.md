@@ -25,7 +25,7 @@ Apply the REQUEST_CHANGES criteria from the contract (one is enough): scope cree
 
 Compute `criticalPathHit`: `true` if any changed file matches a critical path.
 
-Write a JSON file to the path in the `MERGESMITH_VERDICT` environment variable, with this exact shape:
+Write a JSON file named `mergesmith-verdict.json` in the repository root (current directory), with this exact shape:
 
 ```json
 {
@@ -37,14 +37,14 @@ Write a JSON file to the path in the `MERGESMITH_VERDICT` environment variable, 
 }
 ```
 
-Write it exactly like this (confirm the path first with `echo "$MERGESMITH_VERDICT"`):
+Write it exactly like this — a **literal filename** (the review sandbox blocks reading env vars, so do NOT rely on `$MERGESMITH_VERDICT`):
 
 ```bash
-cat > "$MERGESMITH_VERDICT" <<'EOF'
+cat > mergesmith-verdict.json <<'EOF'
 { ...the verdict... }
 EOF
 ```
 
 Do NOT call `gh pr review`, `gh pr merge`, or post comments yourself — emitting the Verdict is your whole job. The orchestrator posts the comments, approves/merges or sends the follow-up, applies the labels, and notifies Slack.
 
-If `MERGESMITH_VERDICT` is unset (a manual run, not driven by the tick), write the verdict to `./mergesmith-verdict.json` instead and tell the user that no automatic action will be taken.
+The orchestrator reads `mergesmith-verdict.json` from the repository root after your session ends. On a manual run it simply stays there for inspection (no automatic action).

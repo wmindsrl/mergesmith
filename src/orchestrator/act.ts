@@ -11,6 +11,13 @@ function firstLine(text: string): string {
   return text.split('\n')[0] ?? text;
 }
 
+// " (claude-code/opus)" — which engine+model produced the verdict.
+function attributionSuffix(verdict: Verdict): string {
+  const a = verdict.attribution;
+  if (!a) return '';
+  return a.model ? ` (${a.engine}/${a.model})` : ` (${a.engine})`;
+}
+
 function verdictBody(verdict: Verdict): string {
   const lines = [verdict.rationale];
   if (verdict.comments.length > 0) {
@@ -19,6 +26,7 @@ function verdictBody(verdict: Verdict): string {
       lines.push(`- \`${c.path}${c.line ? `:${c.line}` : ''}\` — ${c.body}`);
     }
   }
+  if (verdict.attribution) lines.push('', `— verified by${attributionSuffix(verdict)}`);
   return lines.join('\n');
 }
 
@@ -53,7 +61,7 @@ export async function applyVerdict(
     try {
       await getImplementer(config).followup(ref, verdict.followupMessage ?? verdict.rationale);
       markReviewed(config.repo, pr, sha);
-      await postSlack(config.slack, `:no_entry: REQUEST_CHANGES PR #${pr} — ${firstLine(verdict.rationale)}`);
+      await postSlack(config.slack, `:no_entry: REQUEST_CHANGES PR #${pr} — ${firstLine(verdict.rationale)}${attributionSuffix(verdict)}`);
     } catch (error) {
       if (error instanceof FollowupError && error.kind === 'busy') {
         // Do NOT mark the SHA: the tick retries next round (dedup avoids duplicate comments).
@@ -75,7 +83,7 @@ export async function applyVerdict(
     );
     setLabels([L.needsHuman], [L.rework]);
     markReviewed(config.repo, pr, sha);
-    await postSlack(config.slack, `:hourglass: PR #${pr} ok per il verifier ma tocca un path critico: serve la tua review`, {
+    await postSlack(config.slack, `:hourglass: PR #${pr} ok per il verifier ma tocca un path critico: serve la tua review${attributionSuffix(verdict)}`, {
       mention: true,
     });
     return;
@@ -85,5 +93,5 @@ export async function applyVerdict(
   mergeAuto(config, pr);
   setLabels([L.approved], [L.rework, L.needsHuman]);
   markReviewed(config.repo, pr, sha);
-  await postSlack(config.slack, `:white_check_mark: APPROVE PR #${pr} — auto-merge attivo`);
+  await postSlack(config.slack, `:white_check_mark: APPROVE PR #${pr} — auto-merge attivo${attributionSuffix(verdict)}`);
 }

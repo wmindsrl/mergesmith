@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // mergesmith CLI. Thin dispatcher over the orchestrator + scaffolder.
-import { loadConfig } from './config.js';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { loadConfig, configPath } from './config.js';
 import { dispatchSpec } from './orchestrator/dispatch.js';
 import { tickAll, tickRepo } from './orchestrator/tick.js';
 import { markReviewed, refForBranch } from './orchestrator/state.js';
-import { getImplementer } from './providers/registry.js';
+import { getImplementer, getVerifier } from './providers/registry.js';
 import { FollowupError } from './providers/types.js';
 import { postSlack } from './slack.js';
 import { runInit } from './scaffold/bootstrap.js';
@@ -23,6 +24,7 @@ Usage:
   mergesmith followup --branch <b> --message "<m>"   Send a manual follow-up to the agent
   mergesmith notify "<text>" [--mention]      Post to the configured Slack channel
   mergesmith mark-reviewed <pr> <sha>         Mark a PR SHA as processed
+  mergesmith verify-model [<model>]           Get/set the default review model (verifier.model)
 `;
 
 async function main(): Promise<void> {
@@ -82,6 +84,36 @@ async function main(): Promise<void> {
       if (!pr || !sha) throw new Error('Uso: mergesmith mark-reviewed <pr> <sha>');
       markReviewed(loadConfig().repo, Number(pr), sha);
       console.log(`✓ PR #${pr} marcata: ${sha}`);
+      break;
+    }
+
+    case 'verify-model': {
+      const config = loadConfig();
+      if (rest.includes('--list')) {
+        const verifier = getVerifier(config);
+        const models = verifier.listModels ? await verifier.listModels() : [];
+        console.log(
+          models.length
+            ? `Modelli disponibili (${verifier.id}):\n  ${models.join('\n  ')}`
+            : `Il verifier "${verifier.id}" non espone una lista di modelli`,
+        );
+        const current = process.env.MERGESMITH_VERIFIER_MODEL ?? config.verifier.model;
+        console.log(`\nattuale: ${current ?? '(default del CLI claude)'}`);
+        break;
+      }
+      const model = rest.find((a) => !a.startsWith('--'));
+      if (!model) {
+        const current = process.env.MERGESMITH_VERIFIER_MODEL ?? config.verifier.model;
+        console.log(`verifier.model attuale: ${current ?? '(default del CLI claude)'}`);
+        break;
+      }
+      const path = configPath();
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as {
+        verifier?: { provider?: string; command?: string; model?: string };
+      };
+      raw.verifier = { ...(raw.verifier ?? {}), model };
+      writeFileSync(path, `${JSON.stringify(raw, null, 2)}\n`);
+      console.log(`✓ verifier.model impostato a "${model}" in ${path}`);
       break;
     }
 

@@ -14,6 +14,8 @@ export type Verdict = {
   rationale: string;
   /** REWORK message sent to the implementer when decision is REQUEST_CHANGES. */
   followupMessage?: string;
+  /** Which engine+model produced this verdict — rendered in review/Slack messages. */
+  attribution?: { engine: string; model?: string };
 };
 
 export type ImplementerState = 'running' | 'finished' | 'error' | 'expired';
@@ -61,6 +63,8 @@ export interface VerifyInput {
 export interface VerifierProvider {
   readonly id: string;
   verify(input: VerifyInput): Promise<Verdict>;
+  /** Available models for this engine (for `mergesmith verify-model --list`). */
+  listModels?(): Promise<string[]>;
 }
 
 /** Typed failure from followup() so the orchestrator can distinguish retry-able cases. */

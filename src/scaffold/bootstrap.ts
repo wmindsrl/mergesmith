@@ -21,7 +21,7 @@ const CONFIG_TEMPLATE = `{
     "apiKeyEnv": "CURSOR_API_KEY",
     "branchPrefix": "cursor/"
   },
-  "verifier": { "provider": "claude-code", "command": "/validate-pr" },
+  "verifier": { "provider": "claude-code", "command": "/validate-pr", "model": "opus" },
   "github": { "tokenEnv": "GH_TOKEN_MERGESMITH" },
   "contract": { "appendix": "docs/agents/CONTRACT.md" },
   "criticalPaths": ".github/CODEOWNERS",

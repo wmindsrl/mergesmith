@@ -49,9 +49,12 @@ export async function dispatchSpec(config: MergesmithConfig, specPath: string): 
 
   const branchInfo = result.branch ? `branch \`${result.branch}\`` : 'branch non ancora creato (comparirà nella PR)';
   try {
+    const engineLabel = config.implementer.model
+      ? `${config.implementer.provider}/${config.implementer.model}`
+      : config.implementer.provider;
     await postSlack(
       config.slack,
-      `:rocket: *Dispatch* — spec \`${fm.id}\` inviata a ${config.implementer.provider} ` +
+      `:rocket: *Dispatch* — spec \`${fm.id}\` inviata a ${engineLabel} ` +
         `(base \`${fm.base}\`, ${branchInfo})${result.prUrl ? `\nPR: ${result.prUrl}` : ''}`,
     );
   } catch (error) {

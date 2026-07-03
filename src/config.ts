@@ -23,6 +23,8 @@ export interface ImplementerConfig {
 export interface VerifierConfig {
   provider: string;
   command: string;
+  /** Model override for the review (claude-code: passed as `claude --model`). Omit = CLI default. */
+  model?: string;
 }
 
 export interface SlackConfig {
@@ -104,6 +106,7 @@ export function loadConfig(cwd: string = process.cwd()): MergesmithConfig {
     verifier: {
       provider: raw.verifier.provider,
       command: raw.verifier.command ?? '/validate-pr',
+      model: raw.verifier.model,
     },
     github: { tokenEnv: raw.github?.tokenEnv ?? 'GH_TOKEN_MERGESMITH' },
     contract: { appendix: raw.contract?.appendix ?? 'docs/agents/CONTRACT.md' },
