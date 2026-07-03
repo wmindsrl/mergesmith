@@ -11,7 +11,13 @@ export async function threadedPost(
   text: string,
   opts?: { mention?: boolean },
 ): Promise<void> {
-  const existing = getThread(config.repo, pr);
-  const res = await postSlack(config.slack, text, { mention: opts?.mention, threadTs: existing?.ts });
-  if (!existing) setThread(config.repo, pr, res.ts, res.channel);
+  // Best-effort: a failed notification must NEVER abort the verdict application (labels, merge,
+  // follow-up already happened / still need to happen). Log and move on.
+  try {
+    const existing = getThread(config.repo, pr);
+    const res = await postSlack(config.slack, text, { mention: opts?.mention, threadTs: existing?.ts });
+    if (!existing) setThread(config.repo, pr, res.ts, res.channel);
+  } catch (err) {
+    console.error(`Slack (PR #${pr}) fallito dopo retry: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }

@@ -28,6 +28,25 @@ export function resolveChannel(slack: SlackConfig, override?: string): string {
   return channel;
 }
 
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Slack over a flaky network (WSL/Tailscale): retry transient failures (fetch failed / 429 / 5xx)
+// a few times before giving up, so a network blip doesn't silently drop a notification.
+async function fetchRetry(url: string, init: RequestInit, attempts = 3): Promise<Response> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await fetch(url, init);
+      if (res.status !== 429 && res.status < 500) return res;
+      lastErr = new Error(`Slack HTTP ${res.status}`);
+    } catch (err) {
+      lastErr = err;
+    }
+    if (i < attempts - 1) await sleep(400 * 2 ** i);
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
 // JSON Web API call (chat.postMessage & other write methods that accept marshalled JSON —
 // used where the payload can be long, e.g. message text). Fail-loud on {ok:false}.
 async function slackApi<T = Record<string, unknown>>(
@@ -36,7 +55,7 @@ async function slackApi<T = Record<string, unknown>>(
   body: Record<string, unknown>,
 ): Promise<T & { ok: boolean }> {
   const token = loadEnvVar(slack.botTokenEnv);
-  const res = await fetch(`https://slack.com/api/${method}`, {
+  const res = await fetchRetry(`https://slack.com/api/${method}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
     body: JSON.stringify(body),
@@ -58,7 +77,7 @@ async function slackForm<T = Record<string, unknown>>(
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined) form.set(key, String(value));
   }
-  const res = await fetch(`https://slack.com/api/${method}`, {
+  const res = await fetchRetry(`https://slack.com/api/${method}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString(),

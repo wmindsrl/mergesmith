@@ -5,6 +5,16 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] — 2026-07-04
+
+### Fixed
+- **Slack notifications survive a flaky network.** On WSL/Tailscale, transient `fetch failed`
+  bursts were dropping Slack posts — and, because `threadedPost` wasn't guarded, the error
+  propagated out and aborted the rest of the verdict application (no notification, and the loop
+  logged `✗ PR #N: fetch failed`). Slack calls now retry transient failures (fetch failed / 429 /
+  5xx, 3 attempts with backoff), and `threadedPost` is best-effort: a failed notification logs but
+  never aborts the loop's GitHub work.
+
 ## [0.3.2] — 2026-07-03
 
 ### Changed
