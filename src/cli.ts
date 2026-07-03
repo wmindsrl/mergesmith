@@ -44,7 +44,7 @@ async function main(): Promise<void> {
     case 'dispatch': {
       const issueArg = argValue(rest, '--issue');
       if (issueArg) {
-        await dispatchIssue(loadConfig(), Number(issueArg));
+        await dispatchIssue(loadConfig(), Number(issueArg), argValue(rest, '--base') ?? undefined);
         break;
       }
       const spec = rest.find((a) => !a.startsWith('--'));
@@ -189,6 +189,7 @@ async function main(): Promise<void> {
         [config.issues.ready, '0e8a16', 'Issue ready to dispatch'],
         [config.issues.inProgress, '1d76db', 'Issue dispatched — in progress'],
         [config.issues.needsTriage, 'ededed', 'Issue needs human triage before dispatch'],
+        [config.issues.completed, '0052cc', 'Issue work merged (auto-closes when the branch reaches main)'],
       ];
       for (const [name, color, description] of specs) {
         try {

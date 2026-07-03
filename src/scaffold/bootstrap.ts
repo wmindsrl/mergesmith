@@ -174,6 +174,7 @@ export async function runInit(cwd: string): Promise<void> {
       [config.issues.ready, '0e8a16', 'Issue ready to dispatch'],
       [config.issues.inProgress, '1d76db', 'Issue dispatched — in progress'],
       [config.issues.needsTriage, 'ededed', 'Issue needs human triage before dispatch'],
+      [config.issues.completed, '0052cc', 'Issue work merged (auto-closes when the branch reaches main)'],
     ];
     for (const [name, color, description] of specs) {
       try {

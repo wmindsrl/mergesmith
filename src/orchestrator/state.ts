@@ -39,6 +39,19 @@ export function issueDispatched(repo: string, issueNumber: number): boolean {
   return Boolean(loadState(repo).issues?.[String(issueNumber)]);
 }
 
+export function issueForBranch(repo: string, branch: string): IssueRecord | null {
+  return Object.values(loadState(repo).issues ?? {}).find((r) => r.branch === branch) ?? null;
+}
+
+export function markIssueDone(repo: string, issueNumber: number): void {
+  const state = loadState(repo);
+  const rec = state.issues?.[String(issueNumber)];
+  if (rec) {
+    rec.done = true;
+    saveState(repo, state);
+  }
+}
+
 export function loadState(repo: string): StateFile {
   return readJson<StateFile>(statePath(repo), { runs: {} });
 }

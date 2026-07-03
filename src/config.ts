@@ -40,6 +40,7 @@ export interface IssueLabelConfig {
   ready: string;
   inProgress: string;
   needsTriage: string;
+  completed: string;
 }
 
 export interface MergesmithConfig {
@@ -61,6 +62,7 @@ export const DEFAULT_ISSUE_LABELS: IssueLabelConfig = {
   ready: 'mergesmith:ready',
   inProgress: 'mergesmith:in-progress',
   needsTriage: 'mergesmith:needs-triage',
+  completed: 'mergesmith:completed',
 };
 
 export const DEFAULT_LABELS: LabelConfig = {

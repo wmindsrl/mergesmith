@@ -8,18 +8,19 @@ import { getImplementer } from '../providers/registry.js';
 import { postSlack } from '../slack.js';
 import { issueDispatched, recordIssue } from './state.js';
 
-function issuePrompt(config: MergesmithConfig, issue: IssueMeta): string {
+function issuePrompt(config: MergesmithConfig, issue: IssueMeta, base: string): string {
   return (
     `Implement GitHub issue #${issue.number}: "${issue.title}".\n\n` +
     `${issue.body}\n\n` +
     `Follow \`${config.contract.appendix}\`. Work only within the issue's scope. ` +
-    `Open a PR to \`${config.base}\` whose description includes "Closes #${issue.number}" and follows ` +
+    `Open a PR to \`${base}\` whose description includes "Closes #${issue.number}" and follows ` +
     `the CONTRACT PR template. When your self-check is fully green, mark the PR ready (NOT draft).`
   );
 }
 
-export async function dispatchIssue(config: MergesmithConfig, issueNumber: number): Promise<void> {
+export async function dispatchIssue(config: MergesmithConfig, issueNumber: number, baseOverride?: string): Promise<void> {
   const issue = getIssue(config, issueNumber);
+  const base = baseOverride ?? config.base;
 
   // Validate secrets before side-effects (a successful dispatch with a failed notify would
   // look failed and invite a duplicate dispatch).
@@ -28,9 +29,9 @@ export async function dispatchIssue(config: MergesmithConfig, issueNumber: numbe
 
   const impl = getImplementer(config);
   const result = await impl.dispatch({
-    prompt: issuePrompt(config, issue),
+    prompt: issuePrompt(config, issue, base),
     repo: config.repo,
-    base: config.base,
+    base,
     model: config.implementer.model,
   });
 

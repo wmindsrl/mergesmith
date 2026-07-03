@@ -5,7 +5,7 @@ import { addLabels, approve, comment, mergeAuto, removeLabels, requestChanges } 
 import { postSlack } from '../slack.js';
 import { getImplementer } from '../providers/registry.js';
 import { FollowupError, type Verdict } from '../providers/types.js';
-import { markReviewed, refForBranch } from './state.js';
+import { issueForBranch, markIssueDone, markReviewed, refForBranch } from './state.js';
 
 function firstLine(text: string): string {
   return text.split('\n')[0] ?? text;
@@ -113,5 +113,22 @@ export async function applyVerdict(
   }
   setLabels([L.approved], [L.rework, L.needsHuman]);
   markReviewed(config.repo, pr, sha);
-  await postSlack(config.slack, `:white_check_mark: APPROVE PR #${pr} — auto-merge attivo${attributionSuffix(verdict)}`);
+
+  // If this PR closes a tracked issue, mark it completed. A merge into a non-default branch
+  // does NOT auto-close the issue on GitHub, so this label signals "work done" until the
+  // branch reaches main.
+  const issue = issueForBranch(config.repo, branch);
+  if (issue) {
+    if (L.enabled) {
+      addLabels(config, issue.issueNumber, [config.issues.completed]);
+      removeLabels(config, issue.issueNumber, [config.issues.inProgress]);
+    }
+    markIssueDone(config.repo, issue.issueNumber);
+  }
+
+  await postSlack(
+    config.slack,
+    `:white_check_mark: APPROVE PR #${pr} — auto-merge attivo${attributionSuffix(verdict)}` +
+      `${issue ? ` (issue #${issue.issueNumber} → completed)` : ''}`,
+  );
 }

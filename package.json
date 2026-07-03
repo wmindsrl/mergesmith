@@ -1,6 +1,6 @@
 {
   "name": "@wmind/mergesmith",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "The smith that forges specs into merged PRs — autonomous AI implementer + adversarial reviewer, pluggable engines, human gate on critical paths.",
   "type": "module",
   "bin": {
