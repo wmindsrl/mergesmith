@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configPath, DEFAULT_LABELS, loadConfig, type MergesmithConfig } from '../config.js';
-import { ensureLabel } from '../github.js';
+import { createRuleset, ensureLabelAsUser, rulesetExists, whoami } from '../github.js';
 
 const CONFIG_TEMPLATE = `{
   "repo": "OWNER/REPO",
@@ -95,6 +95,15 @@ function writeIfAbsent(path: string, content: string, log: string[]): void {
 
 export async function runInit(cwd: string): Promise<void> {
   const log: string[] = [];
+
+  // Setup runs as the human's gh identity (needs repo ADMIN for the ruleset).
+  const who = whoami();
+  log.push(
+    who
+      ? `gh autenticato come: ${who}`
+      : '⚠ gh NON autenticato — esegui `gh auth login` come utente ADMIN del repo, poi ri-lancia `mergesmith init`',
+  );
+
   writeIfAbsent(configPath(cwd), CONFIG_TEMPLATE, log);
   writeIfAbsent(join(cwd, '.github/CODEOWNERS'), CODEOWNERS_TEMPLATE, log);
   writeIfAbsent(join(cwd, 'docs/agents/CONTRACT.md'), CONTRACT_APPENDIX_TEMPLATE, log);
@@ -106,8 +115,25 @@ export async function runInit(cwd: string): Promise<void> {
     // config still a placeholder — fill it and re-run.
   }
 
-  if (config && config.repo !== 'OWNER/REPO') {
-    writeIfAbsent(join(cwd, '.github/mergesmith-ruleset.json'), rulesetJson(config), log);
+  if (config && config.repo !== 'OWNER/REPO' && who) {
+    const rulesetPath = join(cwd, '.github/mergesmith-ruleset.json');
+    writeIfAbsent(rulesetPath, rulesetJson(config), log);
+
+    // Apply the main-gate ruleset (idempotent): PR + code-owner review + status check "ci" + squash-only.
+    if (rulesetExists(config, 'mergesmith-main')) {
+      log.push('= ruleset "mergesmith-main" già presente');
+    } else {
+      try {
+        createRuleset(config, rulesetPath);
+        log.push('+ ruleset "mergesmith-main" applicato (gate su main)');
+      } catch (error) {
+        log.push(
+          `! ruleset non applicato (${error instanceof Error ? error.message : String(error)}) — serve ADMIN; ` +
+            `applicalo poi con: gh api -X POST repos/${config.repo}/rulesets --input .github/mergesmith-ruleset.json`,
+        );
+      }
+    }
+
     const L = config.labels;
     const specs: Array<[string, string, string]> = [
       [L.managed, 'ededed', 'Managed by Mergesmith'],
@@ -118,8 +144,8 @@ export async function runInit(cwd: string): Promise<void> {
     ];
     for (const [name, color, description] of specs) {
       try {
-        ensureLabel(config, name, color, description);
-        log.push(`+ label assicurata: ${name}`);
+        ensureLabelAsUser(config, name, color, description);
+        log.push(`+ label: ${name}`);
       } catch (error) {
         log.push(`! label "${name}" non creata (${String(error)})`);
       }
@@ -134,15 +160,13 @@ function checklist(cwd: string, config: MergesmithConfig | null): string {
   const repo = config && config.repo !== 'OWNER/REPO' ? config.repo : '<owner/repo>';
   return [
     '',
-    '--- Manual checklist ---',
-    '1. Fill mergesmith.config.json (repo, slack, provider models), then re-run `mergesmith init`.',
-    `2. Apply the branch ruleset:`,
-    `     gh api -X POST repos/${repo}/rulesets --input .github/mergesmith-ruleset.json`,
-    '3. Install the Cursor GitHub App on the org (once per org).',
-    `4. Add the automation bot as a Write collaborator on ${repo}.`,
-    '5. Set env (in .env.local or the environment): CURSOR_API_KEY, SLACK_BOT_TOKEN, GH_TOKEN_MERGESMITH',
+    '--- Steps init cannot do for you (external accounts) ---',
+    '1. If config was a placeholder: fill mergesmith.config.json (repo, slack, models) and re-run `mergesmith init`.',
+    '2. Install the Cursor GitHub App on the org (once per org) — an OAuth flow on GitHub.',
+    `3. Add the automation bot as a Write collaborator on ${repo} (it reviews/merges with no admin bypass).`,
+    '4. Set env (.env.local or environment): CURSOR_API_KEY, SLACK_BOT_TOKEN, GH_TOKEN_MERGESMITH',
     '   (optional: SLACK_CHANNEL_DEV, SLACK_MENTION_USER_ID).',
-    `6. Register this repo for the cron: add { "path": "${cwd}" } to ~/.mergesmith/repos.json.`,
+    `5. Register this repo for the cron: add { "path": "${cwd}" } to ~/.mergesmith/repos.json.`,
     '',
   ].join('\n');
 }

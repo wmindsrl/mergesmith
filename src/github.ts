@@ -107,7 +107,41 @@ export function removeLabels(config: MergesmithConfig, pr: number, labels: strin
   tryRun(config, ['pr', 'edit', String(pr), '--repo', config.repo, '--remove-label', labels.join(',')]);
 }
 
-// Idempotent (create-or-update via --force). Used by `mergesmith init`.
+// Idempotent (create-or-update via --force). Used at runtime by `ensure-labels` (bot has access).
 export function ensureLabel(config: MergesmithConfig, name: string, color: string, description: string): void {
   run(config, ['label', 'create', name, '--repo', config.repo, '--color', color, '--description', description, '--force']);
+}
+
+// ---- Setup-time helpers (`mergesmith init`) ----
+// These use the DEFAULT gh auth (the human admin running init), NOT the automation bot token:
+// applying a branch ruleset needs repo ADMIN, and at onboarding the bot may not have access yet.
+
+function runAsUser(args: string[]): string {
+  return execFileSync('gh', args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).toString().trim();
+}
+
+/** GitHub login of the current gh auth, or null if not authenticated. */
+export function whoami(): string | null {
+  try {
+    return runAsUser(['api', 'user', '--jq', '.login']);
+  } catch {
+    return null;
+  }
+}
+
+export function rulesetExists(config: MergesmithConfig, name: string): boolean {
+  try {
+    const out = runAsUser(['api', `repos/${config.repo}/rulesets`, '--jq', '.[].name']);
+    return out.split('\n').includes(name);
+  } catch {
+    return false;
+  }
+}
+
+export function createRuleset(config: MergesmithConfig, jsonPath: string): void {
+  runAsUser(['api', '-X', 'POST', `repos/${config.repo}/rulesets`, '--input', jsonPath]);
+}
+
+export function ensureLabelAsUser(config: MergesmithConfig, name: string, color: string, description: string): void {
+  runAsUser(['label', 'create', name, '--repo', config.repo, '--color', color, '--description', description, '--force']);
 }
