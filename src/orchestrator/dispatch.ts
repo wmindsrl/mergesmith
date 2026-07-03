@@ -26,14 +26,12 @@ export async function dispatchSpec(config: MergesmithConfig, specPath: string): 
   loadEnvVar(config.slack.botTokenEnv);
 
   const impl = getImplementer(config);
-  const result = await impl.dispatch({
-    specText: markdown,
-    specPath,
-    repo: config.repo,
-    base: fm.base,
-    contractRef: config.contract.appendix,
-    model: config.implementer.model,
-  });
+  const prompt =
+    `Read \`${specPath}\` and implement it following \`${config.contract.appendix}\`. ` +
+    `Work only within the spec's Scope. Open a PR to \`${fm.base}\` using the CONTRACT PR template ` +
+    `(the \`Spec:\` field is mandatory). When your self-check is fully green, mark the PR ready ` +
+    `for review (NOT draft) — draft PRs are ignored by the review loop.`;
+  const result = await impl.dispatch({ prompt, repo: config.repo, base: fm.base, model: config.implementer.model });
 
   const state = loadState(config.repo);
   state.runs[fm.id] = {

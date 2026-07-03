@@ -65,13 +65,7 @@ export function createCursorProvider(opts: {
         throw new Error(`Nessun model per il provider cursor. Imposta implementer.model. Disponibili: ${ids}`);
       }
       const payload = {
-        prompt: {
-          text:
-            `Read \`${input.specPath}\` and implement it following \`${input.contractRef}\`. ` +
-            `Work only within the spec's Scope. Open a PR to \`${input.base}\` using the CONTRACT PR template ` +
-            `(the \`Spec:\` field is mandatory). When your self-check is fully green, mark the PR ready ` +
-            `for review (NOT draft) — draft PRs are ignored by the review loop.`,
-        },
+        prompt: { text: input.prompt },
         repos: [{ url: `https://github.com/${input.repo}`, startingRef: input.base }],
         autoCreatePR: true,
         model: { id: model },

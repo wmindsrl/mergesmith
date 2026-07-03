@@ -14,8 +14,29 @@ export interface RunRecord {
   done?: boolean;
 }
 
+export interface IssueRecord {
+  issueNumber: number;
+  ref: AgentRef;
+  branch: string | null;
+  prUrl: string | null;
+  dispatchedAt: string;
+  done?: boolean;
+}
+
 export interface StateFile {
   runs: Record<string, RunRecord>;
+  issues?: Record<string, IssueRecord>;
+}
+
+export function recordIssue(repo: string, rec: IssueRecord): void {
+  const state = loadState(repo);
+  state.issues ??= {};
+  state.issues[String(rec.issueNumber)] = rec;
+  saveState(repo, state);
+}
+
+export function issueDispatched(repo: string, issueNumber: number): boolean {
+  return Boolean(loadState(repo).issues?.[String(issueNumber)]);
 }
 
 export function loadState(repo: string): StateFile {

@@ -117,6 +117,34 @@ export function ensureLabel(config: MergesmithConfig, name: string, color: strin
   run(config, ['label', 'create', name, '--repo', config.repo, '--color', color, '--description', description, '--force']);
 }
 
+// ---- Issues (work-source) ----
+// PRs and issues share the /issues/{n}/labels endpoint, so addLabels/removeLabels work for both.
+
+export interface IssueMeta {
+  number: number;
+  title: string;
+  body: string;
+  labels: string[];
+}
+
+export function getIssue(config: MergesmithConfig, n: number): IssueMeta {
+  const out = run(config, ['issue', 'view', String(n), '--repo', config.repo, '--json', 'number,title,body,labels']);
+  const raw = JSON.parse(out) as {
+    number: number;
+    title: string;
+    body: string | null;
+    labels: Array<{ name: string }>;
+  };
+  return { number: raw.number, title: raw.title, body: raw.body ?? '', labels: raw.labels.map((l) => l.name) };
+}
+
+export function listOpenIssuesWithLabel(config: MergesmithConfig, label: string): number[] {
+  const out = run(config, [
+    'issue', 'list', '--repo', config.repo, '--state', 'open', '--label', label, '--json', 'number',
+  ]);
+  return (JSON.parse(out) as Array<{ number: number }>).map((i) => i.number);
+}
+
 // ---- Setup-time helpers (`mergesmith init`) ----
 // These use the DEFAULT gh auth (the human admin running init), NOT the automation bot token:
 // applying a branch ruleset needs repo ADMIN, and at onboarding the bot may not have access yet.

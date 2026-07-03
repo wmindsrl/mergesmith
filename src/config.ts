@@ -36,6 +36,12 @@ export interface SlackConfig {
   mentionUserIdEnv?: string;
 }
 
+export interface IssueLabelConfig {
+  ready: string;
+  inProgress: string;
+  needsTriage: string;
+}
+
 export interface MergesmithConfig {
   repo: string;
   base: string;
@@ -48,7 +54,14 @@ export interface MergesmithConfig {
   contract: { appendix: string };
   criticalPaths: string;
   labels: LabelConfig;
+  issues: IssueLabelConfig;
 }
+
+export const DEFAULT_ISSUE_LABELS: IssueLabelConfig = {
+  ready: 'mergesmith:ready',
+  inProgress: 'mergesmith:in-progress',
+  needsTriage: 'mergesmith:needs-triage',
+};
 
 export const DEFAULT_LABELS: LabelConfig = {
   enabled: true,
@@ -71,6 +84,7 @@ interface RawConfig {
   contract?: { appendix?: string };
   criticalPaths?: string;
   labels?: Partial<LabelConfig>;
+  issues?: Partial<IssueLabelConfig>;
 }
 
 export function configPath(cwd: string = process.cwd()): string {
@@ -119,6 +133,7 @@ export function loadConfig(cwd: string = process.cwd()): MergesmithConfig {
     contract: { appendix: raw.contract?.appendix ?? 'docs/agents/CONTRACT.md' },
     criticalPaths: raw.criticalPaths ?? '.github/CODEOWNERS',
     labels: { ...DEFAULT_LABELS, ...(raw.labels ?? {}) },
+    issues: { ...DEFAULT_ISSUE_LABELS, ...(raw.issues ?? {}) },
   };
 }
 

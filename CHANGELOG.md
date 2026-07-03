@@ -5,6 +5,14 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-07-03
+
+### Added
+- **Issues as work-source.** `mergesmith dispatch --issue <n>` (Mode A) and the tick auto-dispatches open issues labelled `mergesmith:ready` (Mode B). The implementer opens a PR that `Closes #N`; the verifier reviews against the issue when there's no `Spec:` field. Issue labels (`ready`/`in-progress`/`needs-triage`) created by `init`/`ensure-labels`.
+
+### Changed
+- `DispatchInput` now carries a prebuilt `prompt` (the orchestrator builds it for a spec OR an issue); the implementer just runs it.
+
 ## [0.1.9] — 2026-07-03
 
 ### Added

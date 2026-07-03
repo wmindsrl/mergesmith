@@ -11,7 +11,10 @@ Argument: PR number. You are the VERIFIER: judge another agent's work against sp
 
 1. `gh pr view $ARGUMENTS --json title,body,headRefName,baseRefName,headRefOid,files,url`
 2. `gh pr diff $ARGUMENTS`
-3. Read the spec named in the PR body `Spec:` field, **pinned to the base** (not the working tree): `git fetch origin <baseRefName>` then `git show origin/<baseRefName>:<spec path>`. If the `Spec:` field is missing → REQUEST_CHANGES (template violation).
+3. Determine the **source of truth** for this PR's requirements:
+   - If the body has a `Spec:` field → read that spec **pinned to the base** (not the working tree): `git fetch origin <baseRefName>` then `git show origin/<baseRefName>:<spec path>`.
+   - Else if the PR closes an issue (`Closes #N` / `Fixes #N` in the body) → read that issue: `gh issue view N --json title,body`. The issue IS the spec (title + body + any `## Acceptance criteria`).
+   - If neither a `Spec:` field nor a closed issue is present → REQUEST_CHANGES (no traceable requirements).
 4. Read the **base contract** shipped with Mergesmith (the plugin's `CONTRACT.base.md`) AND this repo's **contract appendix** (the `contract.appendix` path in `mergesmith.config.json`, default `docs/agents/CONTRACT.md`).
 5. `cat .github/CODEOWNERS` (or the `criticalPaths` file) — the non-comment paths are the critical paths.
 

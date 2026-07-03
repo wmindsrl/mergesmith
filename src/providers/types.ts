@@ -27,12 +27,10 @@ export interface ImplementerStatus {
 }
 
 export interface DispatchInput {
-  specText: string;
-  specPath: string;
+  /** Full task prompt for the implementer, built by the orchestrator (spec OR issue). */
+  prompt: string;
   repo: string;
   base: string;
-  /** Repo-relative path of the contract the implementer must follow. */
-  contractRef: string;
   model?: string;
 }
 

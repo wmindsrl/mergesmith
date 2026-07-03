@@ -171,6 +171,9 @@ export async function runInit(cwd: string): Promise<void> {
       [L.rework, 'fbca04', 'Changes requested — rework in progress'],
       [L.needsHuman, 'd876e3', 'Critical path — human review required'],
       [L.approved, '0e8a16', 'Approved — auto-merge armed'],
+      [config.issues.ready, '0e8a16', 'Issue ready to dispatch'],
+      [config.issues.inProgress, '1d76db', 'Issue dispatched — in progress'],
+      [config.issues.needsTriage, 'ededed', 'Issue needs human triage before dispatch'],
     ];
     for (const [name, color, description] of specs) {
       try {

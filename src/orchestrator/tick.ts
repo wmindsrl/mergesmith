@@ -9,6 +9,7 @@ import { postSlack } from '../slack.js';
 import { FollowupError, type ImplementerProvider } from '../providers/types.js';
 import { knownBranches, loadReviewed, loadState, markReviewed, refForBranch, saveState } from './state.js';
 import { applyVerdict } from './act.js';
+import { runReadyIssues } from './issue.js';
 
 export interface TickOptions {
   dryRun?: boolean;
@@ -25,6 +26,15 @@ export async function tickRepo(config: MergesmithConfig, opts: TickOptions = {})
   const verifier = getVerifier(config);
   const branches = new Set(knownBranches(config.repo));
   const reviewed = loadReviewed(config.repo);
+
+  // Mode B: dispatch any `ready` issues → they open cursor/* PRs handled by the loop below.
+  if (!opts.dryRun) {
+    try {
+      await runReadyIssues(config);
+    } catch (error) {
+      console.error(`✗ ready-issues: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   for (const pr of listOpenPRs(config)) {
     if (pr.isDraft) continue;

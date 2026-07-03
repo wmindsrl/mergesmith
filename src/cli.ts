@@ -4,6 +4,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { loadConfig, configPath, heartbeatPath, pausedFlagPath } from './config.js';
 import { readJson } from './lib.js';
 import { dispatchSpec } from './orchestrator/dispatch.js';
+import { dispatchIssue } from './orchestrator/issue.js';
 import { tickAll, tickRepo } from './orchestrator/tick.js';
 import { markReviewed, refForBranch } from './orchestrator/state.js';
 import { getImplementer, getVerifier } from './providers/registry.js';
@@ -21,7 +22,7 @@ const HELP = `mergesmith — forge specs into merged PRs
 
 Usage:
   mergesmith init                             Scaffold config + CODEOWNERS + labels + ruleset in this repo
-  mergesmith dispatch <spec-path>             Send a spec to the implementer (opens a PR)
+  mergesmith dispatch <spec-path>|--issue <n> Send a spec or a GitHub issue to the implementer
   mergesmith tick [--all] [--dry-run]         Poll agent-managed PRs (verify green / follow-up red)
   mergesmith followup --branch <b> --message "<m>"   Send a manual follow-up to the agent
   mergesmith notify "<text>" [--mention]      Post to the configured Slack channel
@@ -41,8 +42,13 @@ async function main(): Promise<void> {
       break;
 
     case 'dispatch': {
+      const issueArg = argValue(rest, '--issue');
+      if (issueArg) {
+        await dispatchIssue(loadConfig(), Number(issueArg));
+        break;
+      }
       const spec = rest.find((a) => !a.startsWith('--'));
-      if (!spec) throw new Error('Uso: mergesmith dispatch <spec-path>');
+      if (!spec) throw new Error('Uso: mergesmith dispatch <spec-path> | --issue <n>');
       await dispatchSpec(loadConfig(), spec);
       break;
     }
@@ -180,6 +186,9 @@ async function main(): Promise<void> {
         [L.rework, 'fbca04', 'Changes requested — rework in progress'],
         [L.needsHuman, 'd876e3', 'Critical path — human review required'],
         [L.approved, '0e8a16', 'Approved — auto-merge armed'],
+        [config.issues.ready, '0e8a16', 'Issue ready to dispatch'],
+        [config.issues.inProgress, '1d76db', 'Issue dispatched — in progress'],
+        [config.issues.needsTriage, 'ededed', 'Issue needs human triage before dispatch'],
       ];
       for (const [name, color, description] of specs) {
         try {
