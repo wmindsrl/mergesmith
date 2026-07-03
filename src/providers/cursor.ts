@@ -22,21 +22,42 @@ export function isTransientError(text: string): boolean {
   return /fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|terminated|→ (429|5\d\d):/i.test(text);
 }
 
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Retries transient failures (network blip / 429 / 5xx) in-call so a flaky WSL/Tailscale network
+// doesn't drop a follow-up/dispatch — leaving a PR stuck in rework, re-reviewed every tick without
+// the agent ever getting the instruction. A real 4xx (404, 409 busy, …) surfaces immediately.
 async function cursorFetch(apiKeyEnv: string, path: string, init?: RequestInit): Promise<unknown> {
   const apiKey = loadEnvVar(apiKeyEnv);
-  const res = await fetch(`${API_BASE}${path}`, {
+  const url = `${API_BASE}${path}`;
+  const opts: RequestInit = {
     ...init,
     headers: {
       Authorization: `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
       ...(init?.headers ?? {}),
     },
-  });
-  const body = await res.text();
-  if (!res.ok) {
-    throw new Error(`Cursor API ${init?.method ?? 'GET'} ${path} → ${res.status}: ${body}`);
+  };
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, opts);
+    } catch (err) {
+      lastErr = err; // network blip (fetch failed) → retry
+      await sleep(400 * 2 ** attempt);
+      continue;
+    }
+    if (res.status === 429 || res.status >= 500) {
+      lastErr = new Error(`Cursor API ${init?.method ?? 'GET'} ${path} → ${res.status}`);
+      await sleep(400 * 2 ** attempt);
+      continue;
+    }
+    const body = await res.text();
+    if (!res.ok) throw new Error(`Cursor API ${init?.method ?? 'GET'} ${path} → ${res.status}: ${body}`);
+    return body ? JSON.parse(body) : null;
   }
-  return body ? JSON.parse(body) : null;
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 const STATUS_MAP: Record<string, ImplementerState> = {

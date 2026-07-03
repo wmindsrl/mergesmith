@@ -5,6 +5,11 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] — 2026-07-04
+
+### Fixed
+- **Cursor API calls retry transient failures in-call.** A flaky network (WSL/Tailscale) was dropping follow-ups/dispatches (`fetch failed`), leaving a PR stuck in rework — re-reviewed every tick (wasting a verifier run) without the agent ever receiving the instruction. `cursorFetch` now retries network blips / 429 / 5xx (3 attempts w/ backoff); a real 4xx (404, 409 busy) still surfaces immediately.
+
 ## [0.3.3] — 2026-07-04
 
 ### Fixed
