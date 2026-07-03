@@ -1,0 +1,21 @@
+# Publishes @wmind/mergesmith to npmjs.org on every version tag (v*).
+# Requires: the @wmind org/scope on npmjs.org + an NPM_TOKEN repo secret (Automation token).
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.14'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm install --no-audit --no-fund
+      - run: npm run build
+      - run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
