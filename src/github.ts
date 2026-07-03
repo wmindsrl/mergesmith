@@ -97,14 +97,19 @@ export function comment(config: MergesmithConfig, pr: number, body: string): voi
 
 // ---- Labels (best-effort: never break the loop if a label op fails) ----
 
+// Use the REST API, NOT `gh pr edit --add-label`: the latter goes through GraphQL and
+// fails silently on the deprecated Projects-classic `projectCards` field (exits 0, no-op).
 export function addLabels(config: MergesmithConfig, pr: number, labels: string[]): void {
   if (labels.length === 0) return;
-  tryRun(config, ['pr', 'edit', String(pr), '--repo', config.repo, '--add-label', labels.join(',')]);
+  const args = ['api', '--method', 'POST', `repos/${config.repo}/issues/${pr}/labels`];
+  for (const label of labels) args.push('-f', `labels[]=${label}`);
+  tryRun(config, args);
 }
 
 export function removeLabels(config: MergesmithConfig, pr: number, labels: string[]): void {
-  if (labels.length === 0) return;
-  tryRun(config, ['pr', 'edit', String(pr), '--repo', config.repo, '--remove-label', labels.join(',')]);
+  for (const label of labels) {
+    tryRun(config, ['api', '--method', 'DELETE', `repos/${config.repo}/issues/${pr}/labels/${encodeURIComponent(label)}`]);
+  }
 }
 
 // Idempotent (create-or-update via --force). Used at runtime by `ensure-labels` (bot has access).
