@@ -49,6 +49,8 @@ export interface ImplementerProvider {
   dispatch(input: DispatchInput): Promise<DispatchResult>;
   followup(ref: AgentRef, message: string): Promise<void>;
   status(ref: AgentRef): Promise<ImplementerStatus>;
+  /** Available models for this engine (for `mergesmith dev-model --list`). */
+  listModels?(): Promise<string[]>;
 }
 
 export interface VerifyInput {

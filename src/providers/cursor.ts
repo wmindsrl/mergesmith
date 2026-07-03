@@ -52,6 +52,11 @@ export function createCursorProvider(opts: {
     id: 'cursor',
     branchPrefix: opts.branchPrefix,
 
+    async listModels(): Promise<string[]> {
+      const models = (await cursorFetch(opts.apiKeyEnv, '/v1/models')) as { items?: Array<{ id: string }> };
+      return (models.items ?? []).map((m) => m.id);
+    },
+
     async dispatch(input: DispatchInput): Promise<DispatchResult> {
       const model = input.model ?? opts.model;
       if (!model) {

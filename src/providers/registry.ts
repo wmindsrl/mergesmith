@@ -11,7 +11,8 @@ export function getImplementer(config: MergesmithConfig): ImplementerProvider {
       return createCursorProvider({
         apiKeyEnv: config.implementer.apiKeyEnv,
         branchPrefix: config.implementer.branchPrefix,
-        model: config.implementer.model,
+        // MERGESMITH_IMPLEMENTER_MODEL (env or .env.local) overrides the config default — quick swap.
+        model: loadEnvVarOptional('MERGESMITH_IMPLEMENTER_MODEL') ?? config.implementer.model,
       });
     default:
       throw new Error(`Implementer provider sconosciuto: "${config.implementer.provider}" (disponibili: cursor)`);

@@ -25,7 +25,8 @@ Usage:
   mergesmith followup --branch <b> --message "<m>"   Send a manual follow-up to the agent
   mergesmith notify "<text>" [--mention]      Post to the configured Slack channel
   mergesmith mark-reviewed <pr> <sha>         Mark a PR SHA as processed
-  mergesmith verify-model [<model>]           Get/set the default review model (verifier.model)
+  mergesmith verify-model [--list] [<model>]  Get/set the review model (verifier.model)
+  mergesmith dev-model [--list] [<model>]     Get/set the implementer model (implementer.model)
   mergesmith ensure-labels                    Create the PR state labels in the repo (idempotent)
 `;
 
@@ -116,6 +117,36 @@ async function main(): Promise<void> {
       raw.verifier = { ...(raw.verifier ?? {}), model };
       writeFileSync(path, `${JSON.stringify(raw, null, 2)}\n`);
       console.log(`✓ verifier.model impostato a "${model}" in ${path}`);
+      break;
+    }
+
+    case 'dev-model': {
+      const config = loadConfig();
+      if (rest.includes('--list')) {
+        const impl = getImplementer(config);
+        const models = impl.listModels ? await impl.listModels() : [];
+        console.log(
+          models.length
+            ? `Modelli disponibili (${impl.id}):\n  ${models.join('\n  ')}`
+            : `Il provider "${impl.id}" non espone una lista di modelli`,
+        );
+        const current = process.env.MERGESMITH_IMPLEMENTER_MODEL ?? config.implementer.model;
+        console.log(`\nattuale: ${current ?? '(nessuno)'}`);
+        break;
+      }
+      const model = rest.find((a) => !a.startsWith('--'));
+      if (!model) {
+        const current = process.env.MERGESMITH_IMPLEMENTER_MODEL ?? config.implementer.model;
+        console.log(`implementer.model attuale: ${current ?? '(nessuno)'}`);
+        break;
+      }
+      const path = configPath();
+      const raw = JSON.parse(readFileSync(path, 'utf8')) as {
+        implementer?: { provider?: string; model?: string; apiKeyEnv?: string; branchPrefix?: string };
+      };
+      raw.implementer = { ...(raw.implementer ?? {}), model };
+      writeFileSync(path, `${JSON.stringify(raw, null, 2)}\n`);
+      console.log(`✓ implementer.model impostato a "${model}" in ${path}`);
       break;
     }
 
