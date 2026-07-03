@@ -51,7 +51,7 @@ export async function tickRepo(config: MergesmithConfig, opts: TickOptions = {})
     // pending / error → skip, retry next tick
   }
 
-  await reportStuckRuns(config, impl);
+  if (!opts.dryRun) await reportStuckRuns(config, impl);
 }
 
 async function handleCiRed(
