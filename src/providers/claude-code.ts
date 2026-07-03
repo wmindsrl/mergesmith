@@ -31,7 +31,7 @@ export function createClaudeCodeProvider(opts: {
     },
 
     async verify(input: VerifyInput): Promise<Verdict> {
-      const cwd = process.cwd();
+      const cwd = input.repoPath ?? process.cwd();
       const out = verdictPath(cwd);
       if (existsSync(out)) rmSync(out); // pre-clean any stale verdict
 

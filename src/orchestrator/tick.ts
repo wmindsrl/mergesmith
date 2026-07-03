@@ -1,7 +1,8 @@
 // Stage-1 poll (cron entrypoint): cheap, provider-agnostic. For each agent-managed PR,
 // gate on CI, then let the verifier judge (green) or send a fix follow-up (red).
-import { loadConfig, reposRegistryPath, type MergesmithConfig } from '../config.js';
-import { readJson } from '../lib.js';
+import { existsSync } from 'node:fs';
+import { heartbeatPath, loadConfig, pausedFlagPath, reposRegistryPath, type MergesmithConfig } from '../config.js';
+import { readJson, writeJson } from '../lib.js';
 import { addLabels, ciState, listOpenPRs } from '../github.js';
 import { getImplementer, getVerifier } from '../providers/registry.js';
 import { postSlack } from '../slack.js';
@@ -11,9 +12,15 @@ import { applyVerdict } from './act.js';
 
 export interface TickOptions {
   dryRun?: boolean;
+  /** Local checkout dir of the target repo (multi-repo: passed to the verifier as cwd). */
+  repoPath?: string;
 }
 
 export async function tickRepo(config: MergesmithConfig, opts: TickOptions = {}): Promise<void> {
+  if (!opts.dryRun && existsSync(pausedFlagPath())) {
+    console.log(`mergesmith in pausa (${pausedFlagPath()} presente) — skip`);
+    return;
+  }
   const impl = getImplementer(config);
   const verifier = getVerifier(config);
   const branches = new Set(knownBranches(config.repo));
@@ -46,6 +53,7 @@ export async function tickRepo(config: MergesmithConfig, opts: TickOptions = {})
           base: config.base,
           contractRef: config.contract.appendix,
           codeownersPath: config.criticalPaths,
+          repoPath: opts.repoPath,
         });
         await applyVerdict(config, pr.number, pr.headRefOid, pr.headRefName, verdict);
       } else if (ci === 'red') {
@@ -59,7 +67,10 @@ export async function tickRepo(config: MergesmithConfig, opts: TickOptions = {})
     }
   }
 
-  if (!opts.dryRun) await reportStuckRuns(config, impl);
+  if (!opts.dryRun) {
+    await reportStuckRuns(config, impl);
+    writeJson(heartbeatPath(config.repo), { lastTick: new Date().toISOString() });
+  }
 }
 
 async function handleCiRed(
@@ -125,7 +136,7 @@ export async function tickAll(opts: TickOptions = {}): Promise<void> {
   }
   for (const entry of registry.repos) {
     try {
-      await tickRepo(loadConfig(entry.path), opts);
+      await tickRepo(loadConfig(entry.path), { ...opts, repoPath: entry.path });
     } catch (error) {
       console.error(`tick ${entry.path}: ${error}`);
     }

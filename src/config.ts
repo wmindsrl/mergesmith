@@ -151,3 +151,13 @@ export function verdictPath(repo: string, pr: number): string {
 export function reposRegistryPath(): string {
   return join(mergesmithHome(), 'repos.json');
 }
+
+/** Global pause flag: if this file exists, the tick skips all work (kill switch). */
+export function pausedFlagPath(): string {
+  return join(mergesmithHome(), 'PAUSED');
+}
+
+/** Last-successful-tick heartbeat (for `mergesmith health` / dead-man's-switch checks). */
+export function heartbeatPath(repo: string): string {
+  return join(stateDir(repo), 'heartbeat.json');
+}

@@ -60,6 +60,8 @@ export interface VerifyInput {
   /** Repo-relative path of the contract appendix (domain policy). */
   contractRef: string;
   codeownersPath: string;
+  /** Local checkout dir of the target repo — the verify CLI runs here (multi-repo safe). */
+  repoPath?: string;
 }
 
 export interface VerifierProvider {

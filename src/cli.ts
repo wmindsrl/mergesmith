@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // mergesmith CLI. Thin dispatcher over the orchestrator + scaffolder.
-import { readFileSync, writeFileSync } from 'node:fs';
-import { loadConfig, configPath } from './config.js';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { loadConfig, configPath, heartbeatPath, pausedFlagPath } from './config.js';
+import { readJson } from './lib.js';
 import { dispatchSpec } from './orchestrator/dispatch.js';
 import { tickAll, tickRepo } from './orchestrator/tick.js';
 import { markReviewed, refForBranch } from './orchestrator/state.js';
@@ -28,6 +29,8 @@ Usage:
   mergesmith verify-model [--list] [<model>]  Get/set the review model (verifier.model)
   mergesmith dev-model [--list] [<model>]     Get/set the implementer model (implementer.model)
   mergesmith ensure-labels                    Create the PR state labels in the repo (idempotent)
+  mergesmith pause | resume                   Stop / restart the loop (kill switch, no crontab edit)
+  mergesmith health                           Show last-tick heartbeat + pause state
 `;
 
 async function main(): Promise<void> {
@@ -46,8 +49,26 @@ async function main(): Promise<void> {
 
     case 'tick': {
       const dryRun = rest.includes('--dry-run');
-      if (rest.includes('--all')) await tickAll({ dryRun });
-      else await tickRepo(loadConfig(), { dryRun });
+      const all = rest.includes('--all');
+      try {
+        if (all) await tickAll({ dryRun });
+        else await tickRepo(loadConfig(), { dryRun });
+      } catch (error) {
+        // Systemic failure (e.g. expired token → every call fails): alert Slack, then rethrow.
+        if (!all && !dryRun) {
+          try {
+            const cfg = loadConfig();
+            await postSlack(
+              cfg.slack,
+              `:rotating_light: mergesmith tick FALLITO su ${cfg.repo}: ${error instanceof Error ? error.message : String(error)}`,
+              { mention: true },
+            );
+          } catch {
+            /* alert best-effort: non nascondere l'errore originale */
+          }
+        }
+        throw error;
+      }
       break;
     }
 
@@ -167,6 +188,32 @@ async function main(): Promise<void> {
         } catch (error) {
           console.error(`✗ ${name}: ${error instanceof Error ? error.message : String(error)}`);
         }
+      }
+      break;
+    }
+
+    case 'pause': {
+      writeFileSync(pausedFlagPath(), `${new Date().toISOString()}\n`);
+      console.log(`✓ loop in pausa (${pausedFlagPath()}). Riprendi con: mergesmith resume`);
+      break;
+    }
+
+    case 'resume': {
+      if (existsSync(pausedFlagPath())) rmSync(pausedFlagPath());
+      console.log('✓ loop ripreso (PAUSED rimosso)');
+      break;
+    }
+
+    case 'health': {
+      const config = loadConfig();
+      const hb = readJson<{ lastTick?: string }>(heartbeatPath(config.repo), {});
+      console.log(`repo:            ${config.repo}`);
+      console.log(`in pausa:        ${existsSync(pausedFlagPath()) ? 'SÌ (PAUSED presente)' : 'no'}`);
+      if (hb.lastTick) {
+        const ageMin = Math.round((Date.now() - new Date(hb.lastTick).getTime()) / 60000);
+        console.log(`ultimo tick ok:  ${hb.lastTick} (${ageMin} min fa)`);
+      } else {
+        console.log('ultimo tick ok:  (mai registrato)');
       }
       break;
     }

@@ -36,6 +36,35 @@ const CODEOWNERS_TEMPLATE = `# Critical paths: PRs touching these require human 
 /mergesmith.config.json  @your-codeowner
 `;
 
+// No-secret CI (PR branches are untrusted). The job is named `ci` — the required status
+// check referenced by the Mergesmith ruleset. Steps use --if-present so a fresh repo passes;
+// CUSTOMIZE for your stack.
+const CI_TEMPLATE = `name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # CUSTOMIZE: replace with your project's build/lint/test.
+      - run: |
+          if [ -f package.json ]; then
+            (npm ci || npm install --no-audit --no-fund)
+            npm run build --if-present
+            npm run lint --if-present
+            npm test --if-present
+          else
+            echo "No package.json — replace this 'ci' job with your project's checks."
+          fi
+`;
+
 const CONTRACT_APPENDIX_TEMPLATE = `# Contract appendix — <PROJECT>
 
 Domain-specific review policy for this repo. The generic loop rules live in the
@@ -106,6 +135,7 @@ export async function runInit(cwd: string): Promise<void> {
 
   writeIfAbsent(configPath(cwd), CONFIG_TEMPLATE, log);
   writeIfAbsent(join(cwd, '.github/CODEOWNERS'), CODEOWNERS_TEMPLATE, log);
+  writeIfAbsent(join(cwd, '.github/workflows/ci.yml'), CI_TEMPLATE, log);
   writeIfAbsent(join(cwd, 'docs/agents/CONTRACT.md'), CONTRACT_APPENDIX_TEMPLATE, log);
 
   let config: MergesmithConfig | null = null;
