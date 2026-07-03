@@ -6,6 +6,7 @@ import { dispatchSpec } from './orchestrator/dispatch.js';
 import { tickAll, tickRepo } from './orchestrator/tick.js';
 import { markReviewed, refForBranch } from './orchestrator/state.js';
 import { getImplementer, getVerifier } from './providers/registry.js';
+import { ensureLabel } from './github.js';
 import { FollowupError } from './providers/types.js';
 import { postSlack } from './slack.js';
 import { runInit } from './scaffold/bootstrap.js';
@@ -25,6 +26,7 @@ Usage:
   mergesmith notify "<text>" [--mention]      Post to the configured Slack channel
   mergesmith mark-reviewed <pr> <sha>         Mark a PR SHA as processed
   mergesmith verify-model [<model>]           Get/set the default review model (verifier.model)
+  mergesmith ensure-labels                    Create the PR state labels in the repo (idempotent)
 `;
 
 async function main(): Promise<void> {
@@ -114,6 +116,27 @@ async function main(): Promise<void> {
       raw.verifier = { ...(raw.verifier ?? {}), model };
       writeFileSync(path, `${JSON.stringify(raw, null, 2)}\n`);
       console.log(`✓ verifier.model impostato a "${model}" in ${path}`);
+      break;
+    }
+
+    case 'ensure-labels': {
+      const config = loadConfig();
+      const L = config.labels;
+      const specs: Array<[string, string, string]> = [
+        [L.managed, 'ededed', 'Managed by Mergesmith'],
+        [L.ciRed, 'd73a4a', 'CI failing — fix follow-up sent'],
+        [L.rework, 'fbca04', 'Changes requested — rework in progress'],
+        [L.needsHuman, 'd876e3', 'Critical path — human review required'],
+        [L.approved, '0e8a16', 'Approved — auto-merge armed'],
+      ];
+      for (const [name, color, description] of specs) {
+        try {
+          ensureLabel(config, name, color, description);
+          console.log(`✓ ${name}`);
+        } catch (error) {
+          console.error(`✗ ${name}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
       break;
     }
 

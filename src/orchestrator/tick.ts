@@ -25,30 +25,35 @@ export async function tickRepo(config: MergesmithConfig, opts: TickOptions = {})
     if (!managed) continue;
     if (reviewed[String(pr.number)] === pr.headRefOid) continue;
 
-    if (config.labels.enabled && !pr.labels.includes(config.labels.managed) && !opts.dryRun) {
-      addLabels(config, pr.number, [config.labels.managed]);
-    }
+    try {
+      if (config.labels.enabled && !pr.labels.includes(config.labels.managed) && !opts.dryRun) {
+        addLabels(config, pr.number, [config.labels.managed]);
+      }
 
-    const ci = ciState(config, pr.headRefOid);
-    if (opts.dryRun) {
-      console.log(`DRY: PR #${pr.number} (${pr.headRefName}) ci=${ci}`);
-      continue;
-    }
+      const ci = ciState(config, pr.headRefOid);
+      if (opts.dryRun) {
+        console.log(`DRY: PR #${pr.number} (${pr.headRefName}) ci=${ci}`);
+        continue;
+      }
 
-    if (ci === 'green') {
-      const verdict = await verifier.verify({
-        prNumber: pr.number,
-        repo: config.repo,
-        base: config.base,
-        contractRef: config.contract.appendix,
-        codeownersPath: config.criticalPaths,
-      });
-      await applyVerdict(config, pr.number, pr.headRefOid, pr.headRefName, verdict);
-    } else if (ci === 'red') {
-      if (reviewed[String(pr.number)] === `${pr.headRefOid}:ci-red`) continue;
-      await handleCiRed(config, impl, pr.number, pr.headRefName, pr.headRefOid);
+      if (ci === 'green') {
+        const verdict = await verifier.verify({
+          prNumber: pr.number,
+          repo: config.repo,
+          base: config.base,
+          contractRef: config.contract.appendix,
+          codeownersPath: config.criticalPaths,
+        });
+        await applyVerdict(config, pr.number, pr.headRefOid, pr.headRefName, verdict);
+      } else if (ci === 'red') {
+        if (reviewed[String(pr.number)] === `${pr.headRefOid}:ci-red`) continue;
+        await handleCiRed(config, impl, pr.number, pr.headRefName, pr.headRefOid);
+      }
+      // pending / error → skip, retry next tick
+    } catch (error) {
+      // One PR's failure (network hiccup, gh error) must never abort the whole batch.
+      console.error(`✗ PR #${pr.number}: ${error instanceof Error ? error.message : String(error)} — continuo con le altre`);
     }
-    // pending / error → skip, retry next tick
   }
 
   if (!opts.dryRun) await reportStuckRuns(config, impl);
