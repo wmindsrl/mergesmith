@@ -2,6 +2,7 @@
 // gate on CI, then let the verifier judge (green) or send a fix follow-up (red).
 import { existsSync } from 'node:fs';
 import { heartbeatPath, loadConfig, pausedFlagPath, reposRegistryPath, type MergesmithConfig } from '../config.js';
+import { acquireRepoLock } from '../lock.js';
 import { readJson, writeJson } from '../lib.js';
 import { addLabels, ciState, listOpenPRs } from '../github.js';
 import { getImplementer, getVerifier } from '../providers/registry.js';
@@ -22,6 +23,24 @@ export async function tickRepo(config: MergesmithConfig, opts: TickOptions = {})
     console.log(`mergesmith in pausa (${pausedFlagPath()} presente) — skip`);
     return;
   }
+  if (opts.dryRun) {
+    await runTickCycle(config, opts);
+    return;
+  }
+  // CLI-level lock: no two concurrent tick/verify runs on the same repo (verdict-file / state race).
+  const release = acquireRepoLock(config.repo);
+  if (!release) {
+    console.log(`tick ${config.repo}: già in corso (lock), skip`);
+    return;
+  }
+  try {
+    await runTickCycle(config, opts);
+  } finally {
+    release();
+  }
+}
+
+async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promise<void> {
   const impl = getImplementer(config);
   const verifier = getVerifier(config);
   const branches = new Set(knownBranches(config.repo));
