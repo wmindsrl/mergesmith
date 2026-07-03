@@ -5,6 +5,43 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-07-03
+
+### Added
+- **Slack threading.** Every event about a PR (verdict, CI-red follow-up, merge, needs-human) now
+  threads under one per-PR Slack message instead of flat-posting; mentions still fire only on
+  events that need a human. `threadedPost` + a `pr→{ts,channel}` map in state.
+- **Slack inbox (Slack → issue).** Discuss in a channel thread, an allowed user replies `!go`, and
+  the tick synthesizes a clean GitHub issue (LLM one-shot on the verifier engine), creates it
+  `ready`, reacts 👀→✅, replies in-thread with the link, and credits the reporter + finalizer.
+  Opt-in (`slack.inbox.enabled`) + fail-closed allowlist; bootstrap cursor avoids flooding on
+  historical `!go`; degraded synthesis falls back to a raw issue (flagged, never lost). New
+  `mergesmith inbox` command; runs each tick.
+- **Recap.** `mergesmith recap` posts a scannable snapshot — agent-managed PRs by state + issues by
+  label — on demand; schedule a cron for a daily one.
+- **`/mergesmith-issue` plugin command** — draft a `ready`/`needs-triage` work-issue from within a
+  Claude Code session (the in-session complement to the inbox).
+
+### Changed
+- Slack read methods (`conversations.history`/`replies`, `users.info`) call the API form-encoded —
+  Slack ignores a JSON body on those; `chat.postMessage` stays JSON for long text.
+
+## [0.2.2] — 2026-07-03
+
+### Fixed
+- **Per-repo CLI lock.** Two concurrent `mergesmith tick`/verify runs on the same repo could race on
+  `mergesmith-verdict.json` and the state JSON. An O_EXCL lockfile (stale-stolen after 45 min)
+  serializes them; a second run logs and skips. Dry-run is exempt.
+
+## [0.2.1] — 2026-07-03
+
+### Added
+- **Issue-completed automation.** When an APPROVE merge closes a tracked issue's PR into a
+  non-default branch (no auto-close), the loop labels the issue `mergesmith:completed` and clears
+  `in-progress`, so "done pending main" is legible.
+- **Slack Web API foundation** — `postSlack` returns `{ts, channel}` and accepts `threadTs`;
+  `readChannelHistory`/`readThreadReplies`/`getPermalink`/`addReaction` added (used by 0.3.0).
+
 ## [0.2.0] — 2026-07-03
 
 ### Added

@@ -147,6 +147,8 @@ npx mergesmith tick --all
 | `mergesmith tick [--all] [--dry-run]` | Advance agent-managed PRs one step. `--all` processes every repo registered in `~/.mergesmith/repos.json`; `--dry-run` prints the actions it would take without mutating anything. Designed to run on a cron. |
 | `mergesmith followup --branch <b> --message "<m>"` | Manually queue a rework instruction to the implementer on branch `<b>` (the same mechanism `REQUEST_CHANGES` uses automatically). |
 | `mergesmith notify "<text>" [--mention]` | Post a message to the configured Slack channel via `chat.postMessage`. `--mention` pings the human owner (`mentionUserIdEnv`) for actions that need a person. |
+| `mergesmith inbox` | Poll Slack for `!go`-finalized threads and turn each into a `ready` GitHub issue (the tick runs this every cycle; the command is for manual/testing runs). See [Slack inbox](#slack-inbox). |
+| `mergesmith recap` | Post a state snapshot to Slack — open agent-managed PRs by state + issues by label. On-demand; schedule a separate cron for a daily recap. |
 | `mergesmith mark-reviewed <pr> <sha>` | Mark a PR SHA as already processed (skip it on the next tick). |
 | `mergesmith verify-model [--list] [<model>]` | Get, list, or set the **review** model. Writes `verifier.model` to the config; `--list` shows the verifier engine's models. |
 | `mergesmith dev-model [--list] [<model>]` | Get, list, or set the **implementer** model. Writes `implementer.model` to the config; `--list` shows the implementer engine's models. |
@@ -178,7 +180,8 @@ has a default.
   "slack": {
     "botTokenEnv": "SLACK_BOT_TOKEN",
     "channelEnv": "SLACK_CHANNEL_DEV",
-    "mentionUserIdEnv": "SLACK_MENTION_USER_ID"
+    "mentionUserIdEnv": "SLACK_MENTION_USER_ID",
+    "inbox": { "enabled": false, "allowedUsers": [], "trigger": "!go" }
   },
   "implementer": {
     "provider": "cursor",
@@ -214,6 +217,9 @@ has a default.
 | `slack.botTokenEnv` | Env var holding the Slack **bot token** used for `chat.postMessage`. Default `SLACK_BOT_TOKEN`. |
 | `slack.channel` / `slack.channelEnv` | Target channel, either inline or via env var. Default `channelEnv` = `SLACK_CHANNEL_DEV`. |
 | `slack.mentionUserIdEnv` | Env var with the Slack user id pinged by `notify --mention`. Default `SLACK_MENTION_USER_ID`. |
+| `slack.inbox.enabled` | Turn on the [Slack inbox](#slack-inbox) (`!go`-finalized threads → issues). Default `false` (opt-in). |
+| `slack.inbox.allowedUsers` | Slack user IDs allowed to finalize a thread with the trigger. **Fail-closed**: if empty, the inbox falls back to the mention user, and if that too is absent it does nothing. |
+| `slack.inbox.trigger` | The reply text that finalizes a thread. Default `!go`. |
 | `implementer.provider` | The engine that writes code. **Required.** Currently: `cursor`. |
 | `implementer.model` | Model id for the implementer (e.g. `composer-2.5`). |
 | `implementer.apiKeyEnv` | Env var with the implementer API key. Default `CURSOR_API_KEY`. |
@@ -263,6 +269,40 @@ legible at a glance from the GitHub PR list. Each label name is set explicitly i
 Set `labels.enabled: false` to skip labeling entirely. Labels are advisory state, not access
 control — the actual merge gate is the branch ruleset (CI + CODEOWNERS). Create/repair them any
 time with `mergesmith ensure-labels`.
+
+---
+
+## Slack inbox
+
+Beyond notifications, Slack can be the **work intake**: discuss a bug or feature in a channel
+thread, then an authorized person replies `!go` to turn that thread into a GitHub issue the loop
+picks up. Poll-based — no webhook, no inbound server; the same cron that runs the tick drives it.
+
+**Flow.** Someone posts the problem → the team discusses in the thread → an allowed user replies
+`!go` → on the next tick Mergesmith reads the thread, synthesizes a clean issue (title + body:
+context, what to do, acceptance criteria) on the configured verifier engine, creates it labelled
+`ready` (so it's dispatched the same cycle), reacts 👀→✅ on the trigger, and replies in-thread with
+the issue link — crediting the reporter and the finalizer.
+
+**Enable it** in `slack.inbox`:
+
+```jsonc
+"inbox": { "enabled": true, "allowedUsers": ["U0123ABC"], "trigger": "!go" }
+```
+
+- **Opt-in + fail-closed.** Off by default. Only `allowedUsers` (Slack user IDs) can finalize a
+  thread; empty falls back to the mention user, and if that's absent too the inbox does nothing —
+  it never dispatches work for an unauthorized user.
+- **No flood on enable.** The first poll bootstraps a cursor at the current high-water mark without
+  acting, so pre-existing `!go` messages don't retroactively create issues. One issue per thread
+  (deduped).
+- **No silent failure.** If synthesis is unavailable or unparseable, the issue is still created
+  from the raw thread and the degradation is flagged in the Slack reply — the work is never lost.
+
+The in-session complement is the `/mergesmith-issue` plugin command: draft a `ready`/`needs-triage`
+issue from within a Claude Code session. See
+[`docs/2026-07-03-slack-integration-design.md`](docs/2026-07-03-slack-integration-design.md) for the
+full design.
 
 ---
 
