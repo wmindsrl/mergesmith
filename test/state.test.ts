@@ -8,6 +8,8 @@ import {
   setThread,
   recordIssue,
   issueForBranch,
+  refForBranch,
+  knownBranches,
   markReviewed,
   loadReviewed,
 } from '../src/orchestrator/state.ts';
@@ -36,6 +38,22 @@ test('threads: null before set, round-trips after, scoped per pr', () => {
     assert.equal(getThread(repo, 99), null);
     setThread(repo, 99, '1700000000.000200', 'C123');
     assert.deepEqual(getThread(repo, 42), { ts: '1700000000.000100', channel: 'C123' });
+  });
+});
+
+test('refForBranch/knownBranches: resolve issue-tracked (Mode A) branches, not only runs', () => {
+  withHome(() => {
+    const repo = 'org/app';
+    recordIssue(repo, {
+      issueNumber: 7,
+      ref: { provider: 'cursor', agentId: 'a7', runId: 'r7' },
+      branch: 'cursor/issue-7',
+      prUrl: null,
+      dispatchedAt: '2026-07-03T00:00:00Z',
+    });
+    assert.deepEqual(refForBranch(repo, 'cursor/issue-7'), { provider: 'cursor', agentId: 'a7', runId: 'r7' });
+    assert.ok(knownBranches(repo).includes('cursor/issue-7'));
+    assert.equal(refForBranch(repo, 'cursor/unknown'), null);
   });
 });
 

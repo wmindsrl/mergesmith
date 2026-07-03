@@ -67,9 +67,10 @@ export async function applyVerdict(
       markReviewed(config.repo, pr, sha);
       await threadedPost(config, pr, `:no_entry: REQUEST_CHANGES PR #${pr} — ${firstLine(verdict.rationale)}${attributionSuffix(verdict)}`);
     } catch (error) {
-      if (error instanceof FollowupError && error.kind === 'busy') {
+      if (error instanceof FollowupError && (error.kind === 'busy' || error.kind === 'transient')) {
         // Do NOT mark the SHA: the tick retries next round (dedup avoids duplicate comments).
-        await threadedPost(config, pr, `:hourglass: PR #${pr}: REQUEST_CHANGES su GitHub ma agent occupato — retry al prossimo tick`);
+        const why = error.kind === 'busy' ? 'agent occupato' : 'errore di rete transitorio';
+        await threadedPost(config, pr, `:hourglass: PR #${pr}: REQUEST_CHANGES su GitHub ma ${why} — retry al prossimo tick`);
         return;
       }
       // Fallimento permanente (agent morto/expired): flagga + marca così non si ri-notifica ogni tick.

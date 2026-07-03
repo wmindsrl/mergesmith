@@ -136,7 +136,7 @@ async function handleCiRed(
     await impl.followup(ref, `CI is red on PR #${pr}. Check the failing jobs on GitHub, fix them and push.`);
     markReviewed(config.repo, pr, `${sha}:ci-red`);
   } catch (error) {
-    if (error instanceof FollowupError && error.kind === 'busy') return; // retry next tick
+    if (error instanceof FollowupError && (error.kind === 'busy' || error.kind === 'transient')) return; // retry next tick
     // Fallimento permanente (agent morto/expired): flagga + marca così NON si ri-notifica ogni tick.
     if (config.labels.enabled) addLabels(config, pr, [config.labels.needsHuman]);
     markReviewed(config.repo, pr, `${sha}:ci-red`);

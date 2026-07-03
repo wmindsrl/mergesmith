@@ -75,7 +75,7 @@ export interface VerifierProvider {
 }
 
 /** Typed failure from followup() so the orchestrator can distinguish retry-able cases. */
-export type FollowupErrorKind = 'busy' | 'not_found' | 'other';
+export type FollowupErrorKind = 'busy' | 'transient' | 'not_found' | 'other';
 
 export class FollowupError extends Error {
   readonly kind: FollowupErrorKind;

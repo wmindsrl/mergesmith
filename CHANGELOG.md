@@ -5,6 +5,17 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] — 2026-07-03
+
+### Fixed
+- **Mode A follow-ups now resolve.** `refForBranch`/`knownBranches` searched only `runs`, so a PR
+  dispatched via `dispatch --issue` (recorded in `issues`) was seen as "no known agent" → false
+  needs-human + Slack ping on every REQUEST_CHANGES. Both now search `runs` AND `issues`.
+- **Transient network errors during follow-up retry instead of escalating.** A `fetch failed` /
+  429 / 5xx from the Cursor API while sending a rework follow-up was misclassified as permanent
+  → needs-human. New `FollowupError` kind `transient` (matched by the cursor provider via
+  `isTransientError`); `act.ts` + `tick.handleCiRed` retry it next tick like `busy`.
+
 ## [0.3.0] — 2026-07-03
 
 ### Added

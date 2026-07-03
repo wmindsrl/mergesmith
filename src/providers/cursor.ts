@@ -17,6 +17,11 @@ interface RunInfo {
   git?: { branches?: Array<{ branch: string; prUrl?: string }> };
 }
 
+// Network blip / rate-limit / 5xx from the Cursor API — retryable, unlike a real 4xx.
+export function isTransientError(text: string): boolean {
+  return /fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|socket hang up|terminated|→ (429|5\d\d):/i.test(text);
+}
+
 async function cursorFetch(apiKeyEnv: string, path: string, init?: RequestInit): Promise<unknown> {
   const apiKey = loadEnvVar(apiKeyEnv);
   const res = await fetch(`${API_BASE}${path}`, {
@@ -118,6 +123,10 @@ export function createCursorProvider(opts: {
         // substring (a hex agentId could contain it).
         if (text.includes('→ 409:') || text.includes('agent_busy')) {
           throw new FollowupError(`agent ${ref.agentId} occupato (409)`, 'busy');
+        }
+        // Network blip / rate-limit / 5xx → retry next tick, don't escalate to needs-human.
+        if (isTransientError(text)) {
+          throw new FollowupError(text, 'transient');
         }
         throw new FollowupError(text, 'other');
       }

@@ -114,13 +114,19 @@ export function saveState(repo: string, state: StateFile): void {
 }
 
 export function knownBranches(repo: string): string[] {
-  return Object.values(loadState(repo).runs)
-    .map((r) => r.branch)
-    .filter((b): b is string => !!b);
+  const state = loadState(repo);
+  return [
+    ...Object.values(state.runs).map((r) => r.branch),
+    ...Object.values(state.issues ?? {}).map((i) => i.branch),
+  ].filter((b): b is string => !!b);
 }
 
 export function refForBranch(repo: string, branch: string): AgentRef | null {
-  return Object.values(loadState(repo).runs).find((r) => r.branch === branch)?.ref ?? null;
+  // Search runs (spec dispatch) AND issues (Mode A dispatch) — a branch can be tracked by either.
+  const state = loadState(repo);
+  const fromRuns = Object.values(state.runs).find((r) => r.branch === branch)?.ref;
+  if (fromRuns) return fromRuns;
+  return Object.values(state.issues ?? {}).find((i) => i.branch === branch)?.ref ?? null;
 }
 
 export function loadReviewed(repo: string): Record<string, string> {
