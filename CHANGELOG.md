@@ -5,6 +5,16 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] — 2026-07-03
+
+### Changed
+- **Merge conflicts self-heal instead of escalating.** An APPROVE that can't auto-merge because the
+  PR conflicts with the base is agent-recoverable: the loop now sends the agent a rebase follow-up
+  (`git merge origin/<base>` + resolve) and keeps it queued, instead of flagging `needs-human`.
+  `needs-human` is reserved for genuine human calls — critical-path (CODEOWNERS) review, or a merge
+  failure with no agent to fix it. New `prMergeable` github helper distinguishes CONFLICTING from
+  other merge failures.
+
 ## [0.3.1] — 2026-07-03
 
 ### Fixed

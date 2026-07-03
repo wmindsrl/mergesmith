@@ -91,6 +91,13 @@ export function mergeAuto(config: MergesmithConfig, pr: number): void {
   run(config, ['pr', 'merge', String(pr), '--repo', config.repo, '--auto', '--squash']);
 }
 
+// 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' — used to tell an agent-recoverable conflict (→ rebase)
+// apart from a genuine merge failure (→ human).
+export function prMergeable(config: MergesmithConfig, pr: number): string {
+  const out = tryRun(config, ['pr', 'view', String(pr), '--repo', config.repo, '--json', 'mergeable', '--jq', '.mergeable']);
+  return out ?? 'UNKNOWN';
+}
+
 export function comment(config: MergesmithConfig, pr: number, body: string): void {
   run(config, ['pr', 'comment', String(pr), '--repo', config.repo, '--body', body]);
 }

@@ -1,7 +1,7 @@
 // Provider-neutral side-effects: turn a Verdict into GitHub actions + labels + Slack.
 // Every verifier funnels through here, so merge/gate policy lives in exactly one place.
 import type { MergesmithConfig } from '../config.js';
-import { addLabels, approve, comment, mergeAuto, removeLabels, requestChanges } from '../github.js';
+import { addLabels, approve, comment, mergeAuto, prMergeable, removeLabels, requestChanges } from '../github.js';
 import { threadedPost } from '../thread.js';
 import { getImplementer } from '../providers/registry.js';
 import { FollowupError, type Verdict } from '../providers/types.js';
@@ -102,14 +102,37 @@ export async function applyVerdict(
     approve(config, pr, verdictBody(verdict));
     mergeAuto(config, pr);
   } catch (error) {
-    // Auto-merge non abilitato / PR non mergeable → NON ri-revieware ogni tick (loop costoso):
-    // marca reviewed + flagga per un umano.
+    // Approved but couldn't auto-merge. A merge CONFLICT is agent-recoverable (rebase) — NOT a
+    // human decision. needs-human is reserved for business/key calls (critical paths, dead agents).
+    const ref = refForBranch(config.repo, branch);
+    if (ref && prMergeable(config, pr) === 'CONFLICTING') {
+      try {
+        await getImplementer(config).followup(
+          ref,
+          `PR #${pr} approvata ma in conflitto con \`${config.base}\`. Fai \`git merge origin/${config.base}\`, risolvi i conflitti mantenendo la fedeltà, e pusha — il loop la re-reviewa e la mergia da sola.`,
+        );
+        setLabels([L.approved], [L.needsHuman, L.rework]);
+        markReviewed(config.repo, pr, sha);
+        await threadedPost(
+          config,
+          pr,
+          `:twisted_rightwards_arrows: PR #${pr} approvata ma in conflitto con \`${config.base}\` — rebase automatico richiesto all'agent (nessun intervento umano)`,
+        );
+        return;
+      } catch (followupErr) {
+        // Busy/transient → retry next tick; permanent → fall through to needs-human below.
+        if (followupErr instanceof FollowupError && (followupErr.kind === 'busy' || followupErr.kind === 'transient')) {
+          return;
+        }
+      }
+    }
+    // Genuine escalation: no agent to rebase, or a non-conflict merge failure a human must judge.
     setLabels([L.approved, L.needsHuman], [L.rework]);
     markReviewed(config.repo, pr, sha);
     await threadedPost(
       config,
       pr,
-      `:warning: PR #${pr} APPROVE ma approve/merge fallito (${String(error)}) — verifica/mergia a mano`,
+      `:warning: PR #${pr} APPROVE ma merge fallito (${String(error)}) — serve un occhio`,
       { mention: true },
     );
     return;
