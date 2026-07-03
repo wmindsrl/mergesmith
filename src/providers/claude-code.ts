@@ -48,5 +48,20 @@ export function createClaudeCodeProvider(opts: {
       }
       return readVerdict(cwd, input.prNumber, 'claude-code', opts.model);
     },
+
+    async synthesize(prompt: string): Promise<string> {
+      // Tool-free one-shot: no repo, no edits. Capture stdout as the model's answer.
+      const args = ['-p', prompt, '--permission-mode', 'plan'];
+      if (opts.model) args.push('--model', opts.model);
+      try {
+        return execFileSync('claude', args, {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'inherit'],
+          timeout: 300_000, // 5 min
+        }).toString();
+      } catch (error) {
+        throw new Error(`synthesize claude-code fallita: ${String(error)}`);
+      }
+    },
   };
 }

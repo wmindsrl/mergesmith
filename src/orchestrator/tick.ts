@@ -12,6 +12,7 @@ import { FollowupError, type ImplementerProvider } from '../providers/types.js';
 import { knownBranches, loadReviewed, loadState, markReviewed, refForBranch, saveState } from './state.js';
 import { applyVerdict } from './act.js';
 import { runReadyIssues } from './issue.js';
+import { pollInbox } from '../inbox.js';
 
 export interface TickOptions {
   dryRun?: boolean;
@@ -46,6 +47,16 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
   const verifier = getVerifier(config);
   const branches = new Set(knownBranches(config.repo));
   const reviewed = loadReviewed(config.repo);
+
+  // Slack inbox: !go-finalized threads → new `ready` issues (before runReadyIssues, so a freshly
+  // created issue is dispatched in this same tick).
+  if (!opts.dryRun) {
+    try {
+      await pollInbox(config);
+    } catch (error) {
+      console.error(`✗ inbox: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
 
   // Mode B: dispatch any `ready` issues → they open cursor/* PRs handled by the loop below.
   if (!opts.dryRun) {

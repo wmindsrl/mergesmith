@@ -28,10 +28,46 @@ export interface ThreadRef {
   channel: string;
 }
 
+export interface InboxState {
+  /** High-water mark: newest Slack activity ts already scanned. */
+  cursor?: string;
+  /** Thread-root ts values already turned into an issue (dedup: one issue per thread). */
+  processed?: string[];
+}
+
 export interface StateFile {
   runs: Record<string, RunRecord>;
   issues?: Record<string, IssueRecord>;
   threads?: Record<string, ThreadRef>;
+  inbox?: InboxState;
+}
+
+export function getInboxCursor(repo: string): string | undefined {
+  return loadState(repo).inbox?.cursor;
+}
+
+export function isThreadProcessed(repo: string, threadTs: string): boolean {
+  return loadState(repo).inbox?.processed?.includes(threadTs) ?? false;
+}
+
+export function setInboxCursor(repo: string, cursor: string): void {
+  const state = loadState(repo);
+  state.inbox ??= {};
+  // Monotonic: never move the cursor backwards (out-of-order polls).
+  if (!state.inbox.cursor || Number(cursor) > Number(state.inbox.cursor)) {
+    state.inbox.cursor = cursor;
+    saveState(repo, state);
+  }
+}
+
+export function markThreadProcessed(repo: string, threadTs: string): void {
+  const state = loadState(repo);
+  state.inbox ??= {};
+  state.inbox.processed ??= [];
+  if (!state.inbox.processed.includes(threadTs)) {
+    state.inbox.processed.push(threadTs);
+    saveState(repo, state);
+  }
 }
 
 export function getThread(repo: string, pr: number): ThreadRef | null {

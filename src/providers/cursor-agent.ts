@@ -83,5 +83,22 @@ export function createCursorAgentProvider(opts: {
 
       return readVerdict(cwd, input.prNumber, 'cursor-agent', opts.model);
     },
+
+    async synthesize(prompt: string): Promise<string> {
+      // Tool-free one-shot: capture stdout as the model's answer.
+      const args = ['-p', prompt];
+      if (opts.model) args.push('--model', opts.model);
+      const env = { ...process.env, CURSOR_API_KEY: loadEnvVar(apiKeyEnv) };
+      try {
+        return execFileSync('agent', args, {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'inherit'],
+          timeout: 300_000, // 5 min
+          env,
+        }).toString();
+      } catch (error) {
+        throw new Error(`synthesize cursor-agent fallita: ${String(error)}`);
+      }
+    },
   };
 }

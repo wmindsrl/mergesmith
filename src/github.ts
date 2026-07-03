@@ -145,6 +145,17 @@ export function listOpenIssuesWithLabel(config: MergesmithConfig, label: string)
   return (JSON.parse(out) as Array<{ number: number }>).map((i) => i.number);
 }
 
+// Create an issue (labels must already exist — `mergesmith init`/`ensure-labels` create them).
+// Returns the new issue number, parsed from the URL `gh issue create` prints.
+export function createIssue(config: MergesmithConfig, title: string, body: string, labels: string[]): number {
+  const args = ['issue', 'create', '--repo', config.repo, '--title', title, '--body', body];
+  for (const label of labels) args.push('--label', label);
+  const out = run(config, args);
+  const match = out.match(/\/issues\/(\d+)\s*$/);
+  if (!match) throw new Error(`gh issue create: URL issue non parsabile dall'output: ${out}`);
+  return Number(match[1]);
+}
+
 // ---- Setup-time helpers (`mergesmith init`) ----
 // These use the DEFAULT gh auth (the human admin running init), NOT the automation bot token:
 // applying a branch ruleset needs repo ADMIN, and at onboarding the bot may not have access yet.

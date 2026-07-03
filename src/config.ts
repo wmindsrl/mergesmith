@@ -29,11 +29,21 @@ export interface VerifierConfig {
   apiKeyEnv?: string;
 }
 
+export interface SlackInboxConfig {
+  /** Master switch: poll the channel for !go-finalized threads → GitHub issues. Off by default. */
+  enabled: boolean;
+  /** Slack user IDs allowed to finalize a thread into an issue (fail-closed if empty). */
+  allowedUsers: string[];
+  /** Reply text that finalizes a thread into an issue. */
+  trigger: string;
+}
+
 export interface SlackConfig {
   botTokenEnv: string;
   channel?: string;
   channelEnv?: string;
   mentionUserIdEnv?: string;
+  inbox: SlackInboxConfig;
 }
 
 export interface IssueLabelConfig {
@@ -79,7 +89,7 @@ interface RawConfig {
   base?: string;
   specDir?: string;
   ci?: { workflowName?: string };
-  slack?: Partial<SlackConfig>;
+  slack?: Partial<Omit<SlackConfig, 'inbox'>> & { inbox?: Partial<SlackInboxConfig> };
   implementer?: Partial<ImplementerConfig>;
   verifier?: Partial<VerifierConfig>;
   github?: { tokenEnv?: string };
@@ -114,6 +124,11 @@ export function loadConfig(cwd: string = process.cwd()): MergesmithConfig {
       channel: raw.slack?.channel,
       channelEnv: raw.slack?.channelEnv ?? 'SLACK_CHANNEL_DEV',
       mentionUserIdEnv: raw.slack?.mentionUserIdEnv ?? 'SLACK_MENTION_USER_ID',
+      inbox: {
+        enabled: raw.slack?.inbox?.enabled ?? false,
+        allowedUsers: raw.slack?.inbox?.allowedUsers ?? [],
+        trigger: raw.slack?.inbox?.trigger ?? '!go',
+      },
     },
     implementer: {
       provider: raw.implementer.provider,

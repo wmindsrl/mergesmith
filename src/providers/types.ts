@@ -67,6 +67,11 @@ export interface VerifierProvider {
   verify(input: VerifyInput): Promise<Verdict>;
   /** Available models for this engine (for `mergesmith verify-model --list`). */
   listModels?(): Promise<string[]>;
+  /**
+   * Run a one-shot, tool-free LLM prompt and return its raw stdout. Used to synthesize a
+   * GitHub issue from a Slack discussion. No repo/tools — pure text→text.
+   */
+  synthesize?(prompt: string): Promise<string>;
 }
 
 /** Typed failure from followup() so the orchestrator can distinguish retry-able cases. */

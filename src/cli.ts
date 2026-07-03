@@ -11,6 +11,7 @@ import { getImplementer, getVerifier } from './providers/registry.js';
 import { ensureLabel } from './github.js';
 import { FollowupError } from './providers/types.js';
 import { postSlack } from './slack.js';
+import { pollInbox } from './inbox.js';
 import { runInit } from './scaffold/bootstrap.js';
 
 function argValue(args: string[], flag: string): string | null {
@@ -26,6 +27,7 @@ Usage:
   mergesmith tick [--all] [--dry-run]         Poll agent-managed PRs (verify green / follow-up red)
   mergesmith followup --branch <b> --message "<m>"   Send a manual follow-up to the agent
   mergesmith notify "<text>" [--mention]      Post to the configured Slack channel
+  mergesmith inbox                            Poll Slack for !go-finalized threads → GitHub issues
   mergesmith mark-reviewed <pr> <sha>         Mark a PR SHA as processed
   mergesmith verify-model [--list] [<model>]  Get/set the review model (verifier.model)
   mergesmith dev-model [--list] [<model>]     Get/set the implementer model (implementer.model)
@@ -106,6 +108,13 @@ async function main(): Promise<void> {
       if (!text) throw new Error('Uso: mergesmith notify "<testo>" [--mention]');
       await postSlack(loadConfig().slack, text, { mention: rest.includes('--mention') });
       console.log('✓ notifica inviata');
+      break;
+    }
+
+    case 'inbox': {
+      // One-shot poll (the tick runs this each cycle; this is for manual/testing runs).
+      await pollInbox(loadConfig());
+      console.log('✓ inbox poll completato');
       break;
     }
 

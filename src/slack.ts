@@ -7,6 +7,8 @@ export interface SlackMessage {
   user?: string;
   text?: string;
   thread_ts?: string;
+  reply_count?: number;
+  latest_reply?: string;
   reactions?: Array<{ name: string; users?: string[] }>;
 }
 
@@ -26,7 +28,8 @@ export function resolveChannel(slack: SlackConfig, override?: string): string {
   return channel;
 }
 
-// Generic Web API call, fail-loud on {ok:false}.
+// JSON Web API call (chat.postMessage & other write methods that accept marshalled JSON —
+// used where the payload can be long, e.g. message text). Fail-loud on {ok:false}.
 async function slackApi<T = Record<string, unknown>>(
   slack: SlackConfig,
   method: string,
@@ -37,6 +40,28 @@ async function slackApi<T = Record<string, unknown>>(
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
     body: JSON.stringify(body),
+  });
+  const data = (await res.json()) as T & { ok: boolean; error?: string };
+  if (!data.ok) throw new Error(`Slack ${method} fallita: ${data.error ?? res.status}`);
+  return data;
+}
+
+// Form-encoded Web API call — the canonical content type Slack accepts for ALL methods,
+// including read methods (conversations.history/replies, users.info) that ignore a JSON body.
+async function slackForm<T = Record<string, unknown>>(
+  slack: SlackConfig,
+  method: string,
+  params: Record<string, string | number | undefined>,
+): Promise<T & { ok: boolean }> {
+  const token = loadEnvVar(slack.botTokenEnv);
+  const form = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) form.set(key, String(value));
+  }
+  const res = await fetch(`https://slack.com/api/${method}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
   });
   const data = (await res.json()) as T & { ok: boolean; error?: string };
   if (!data.ok) throw new Error(`Slack ${method} fallita: ${data.error ?? res.status}`);
@@ -61,7 +86,7 @@ export async function postSlack(
 
 export async function addReaction(slack: SlackConfig, channel: string, ts: string, name: string): Promise<void> {
   try {
-    await slackApi(slack, 'reactions.add', { channel, timestamp: ts, name });
+    await slackForm(slack, 'reactions.add', { channel, timestamp: ts, name });
   } catch (error) {
     if (!String(error).includes('already_reacted')) throw error; // already-reacted is fine
   }
@@ -69,7 +94,7 @@ export async function addReaction(slack: SlackConfig, channel: string, ts: strin
 
 export async function getPermalink(slack: SlackConfig, channel: string, ts: string): Promise<string | null> {
   try {
-    const data = await slackApi<{ permalink: string }>(slack, 'chat.getPermalink', {
+    const data = await slackForm<{ permalink: string }>(slack, 'chat.getPermalink', {
       channel,
       message_ts: ts,
     });
@@ -79,15 +104,34 @@ export async function getPermalink(slack: SlackConfig, channel: string, ts: stri
   }
 }
 
+// Display name for a Slack user id (for crediting the human who filed the work). Cached; best-effort.
+const userNameCache = new Map<string, string>();
+export async function resolveUserName(slack: SlackConfig, userId: string): Promise<string> {
+  const cached = userNameCache.get(userId);
+  if (cached) return cached;
+  try {
+    const data = await slackForm<{
+      user: { real_name?: string; name?: string; profile?: { display_name?: string } };
+    }>(slack, 'users.info', { user: userId });
+    const name = data.user.profile?.display_name || data.user.real_name || data.user.name || userId;
+    userNameCache.set(userId, name);
+    return name;
+  } catch {
+    return userId;
+  }
+}
+
 // Channel messages since `oldest` (exclusive). Used by the issue inbox poll.
 export async function readChannelHistory(
   slack: SlackConfig,
   channel: string,
   oldest?: string,
 ): Promise<SlackMessage[]> {
-  const body: Record<string, unknown> = { channel, limit: 200 };
-  if (oldest) body.oldest = oldest;
-  const data = await slackApi<{ messages: SlackMessage[] }>(slack, 'conversations.history', body);
+  const data = await slackForm<{ messages: SlackMessage[] }>(slack, 'conversations.history', {
+    channel,
+    limit: 200,
+    oldest,
+  });
   return data.messages ?? [];
 }
 
@@ -97,7 +141,7 @@ export async function readThreadReplies(
   channel: string,
   threadTs: string,
 ): Promise<SlackMessage[]> {
-  const data = await slackApi<{ messages: SlackMessage[] }>(slack, 'conversations.replies', {
+  const data = await slackForm<{ messages: SlackMessage[] }>(slack, 'conversations.replies', {
     channel,
     ts: threadTs,
     limit: 200,
