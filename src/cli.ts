@@ -12,6 +12,7 @@ import { ensureLabel } from './github.js';
 import { FollowupError } from './providers/types.js';
 import { postSlack } from './slack.js';
 import { pollInbox } from './inbox.js';
+import { postRecap } from './recap.js';
 import { runInit } from './scaffold/bootstrap.js';
 
 function argValue(args: string[], flag: string): string | null {
@@ -28,6 +29,7 @@ Usage:
   mergesmith followup --branch <b> --message "<m>"   Send a manual follow-up to the agent
   mergesmith notify "<text>" [--mention]      Post to the configured Slack channel
   mergesmith inbox                            Poll Slack for !go-finalized threads → GitHub issues
+  mergesmith recap                            Post a state snapshot (PRs + issues) to Slack
   mergesmith mark-reviewed <pr> <sha>         Mark a PR SHA as processed
   mergesmith verify-model [--list] [<model>]  Get/set the review model (verifier.model)
   mergesmith dev-model [--list] [<model>]     Get/set the implementer model (implementer.model)
@@ -115,6 +117,13 @@ async function main(): Promise<void> {
       // One-shot poll (the tick runs this each cycle; this is for manual/testing runs).
       await pollInbox(loadConfig());
       console.log('✓ inbox poll completato');
+      break;
+    }
+
+    case 'recap': {
+      // On-demand snapshot. Schedule a separate cron (e.g. daily) for a recurring recap.
+      await postRecap(loadConfig());
+      console.log('✓ recap inviato');
       break;
     }
 
