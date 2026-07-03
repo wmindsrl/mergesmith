@@ -1,0 +1,52 @@
+{
+  "name": "@wmind/mergesmith",
+  "version": "0.1.0",
+  "description": "The smith that forges specs into merged PRs — autonomous AI implementer + adversarial reviewer, pluggable engines, human gate on critical paths.",
+  "type": "module",
+  "bin": {
+    "mergesmith": "dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./providers": "./dist/providers/types.js"
+  },
+  "files": [
+    "dist",
+    "plugin",
+    "docs/SPEC_TEMPLATE.md"
+  ],
+  "engines": {
+    "node": ">=22.14"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ai-agents",
+    "code-review",
+    "automation",
+    "cursor",
+    "claude",
+    "github-automation",
+    "devtools",
+    "pull-request"
+  ],
+  "author": "Wmind S.r.l.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wmindsrl/mergesmith.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

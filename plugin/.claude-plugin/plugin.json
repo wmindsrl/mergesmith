@@ -1,0 +1,6 @@
+{
+  "name": "mergesmith",
+  "version": "0.1.0",
+  "description": "Dispatch specs to an implementer and adversarially review the resulting PRs (Mergesmith loop).",
+  "author": { "name": "Wmind S.r.l." }
+}
