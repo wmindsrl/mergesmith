@@ -47,6 +47,12 @@ export interface ImplementerProvider {
   dispatch(input: DispatchInput): Promise<DispatchResult>;
   followup(ref: AgentRef, message: string): Promise<void>;
   status(ref: AgentRef): Promise<ImplementerStatus>;
+  /** Spawn a FRESH agent bound to an EXISTING branch (auto-recover of a stalled rework, and
+   * `followup --branch` for a PR whose agent is dead/untracked). Works on the branch, no new PR. */
+  adoptBranch?(repo: string, branch: string, prompt: string): Promise<DispatchResult>;
+  /** True when the agent's *latest* run has finished/errored — it's done working. Used to detect a
+   * follow-up that was received but produced no commit (the agent closed the run without pushing). */
+  agentIdle?(ref: AgentRef): Promise<boolean>;
   /** Available models for this engine (for `mergesmith dev-model --list`). */
   listModels?(): Promise<string[]>;
 }

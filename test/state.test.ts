@@ -8,6 +8,10 @@ import {
   setThread,
   getBranchThread,
   setBranchThread,
+  getRework,
+  setRework,
+  clearRework,
+  setRefForBranch,
   recordIssue,
   issueForBranch,
   refForBranch,
@@ -53,6 +57,37 @@ test('branch thread: dispatch stores by branch, adoptable as the PR thread root'
     const bt = getBranchThread(repo, 'cursor/x')!;
     setThread(repo, 5, bt.ts, bt.channel);
     assert.deepEqual(getThread(repo, 5), { ts: 'ts-x', channel: 'C1' });
+  });
+});
+
+test('rework state: set/get/clear round-trip', () => {
+  withHome(() => {
+    const repo = 'org/app';
+    assert.equal(getRework(repo, 42), null);
+    setRework(repo, 42, { sha: 'abc', followupAt: 1000, attempts: 1, fixPrompt: 'fix it' });
+    assert.deepEqual(getRework(repo, 42), { sha: 'abc', followupAt: 1000, attempts: 1, fixPrompt: 'fix it' });
+    clearRework(repo, 42);
+    assert.equal(getRework(repo, 42), null);
+  });
+});
+
+test('setRefForBranch: updates an existing record, else adds a synthetic run', () => {
+  withHome(() => {
+    const repo = 'org/app';
+    const fresh = { provider: 'cursor', agentId: 'fresh', runId: 'r' };
+    // no record for the branch → synthetic run so refForBranch resolves it
+    setRefForBranch(repo, 'cursor/x', fresh);
+    assert.deepEqual(refForBranch(repo, 'cursor/x'), fresh);
+    // existing issue record → ref updated in place (auto-recover retargets it)
+    recordIssue(repo, {
+      issueNumber: 9,
+      ref: { provider: 'cursor', agentId: 'old' },
+      branch: 'cursor/y',
+      prUrl: null,
+      dispatchedAt: '2026-07-04T00:00:00Z',
+    });
+    setRefForBranch(repo, 'cursor/y', fresh);
+    assert.deepEqual(refForBranch(repo, 'cursor/y'), fresh);
   });
 });
 

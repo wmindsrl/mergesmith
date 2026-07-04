@@ -5,6 +5,13 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-07-04
+
+### Added
+- **Rework watchdog + auto-recover.** A REQUEST_CHANGES follow-up is now a tracked promise. The tick watches each rework PR: if the agent lands a new SHA it re-reviews; if the agent stalls (closes its run without pushing — `agentIdle` — or a TTL elapses) it auto-recovers by spawning a FRESH agent bound to the branch (`adoptBranch`), up to 2 attempts, then escalates to `needs-human`. Kills the silent-spin where the loop believed a stuck agent was working (the ramwms port pain).
+- **`adoptBranch`** on the implementer provider — spawn a fresh agent on an existing branch (`workOnCurrentBranch`, no new PR). Also powers **`mergesmith followup --branch`** for a PR whose agent is dead/untracked (no more needs-human dead-end), and the REQUEST_CHANGES no-agent path.
+- `agentIdle(ref)` — is the agent's latest run finished (done working)? The stall signal.
+
 ## [0.3.5] — 2026-07-04
 
 ### Changed

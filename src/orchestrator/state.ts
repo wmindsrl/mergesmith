@@ -35,11 +35,19 @@ export interface InboxState {
   processed?: string[];
 }
 
+export interface ReworkRecord {
+  sha: string; // the head SHA that got REQUEST_CHANGES — rework is "delivered" when the SHA changes
+  followupAt: number; // Date.now() of the last follow-up / recovery
+  attempts: number; // auto-recover attempts so far
+  fixPrompt: string; // the instruction to (re-)send to the agent
+}
+
 export interface StateFile {
   runs: Record<string, RunRecord>;
   issues?: Record<string, IssueRecord>;
   threads?: Record<string, ThreadRef>;
   inbox?: InboxState;
+  rework?: Record<string, ReworkRecord>;
 }
 
 export function getInboxCursor(repo: string): string | undefined {
@@ -141,6 +149,53 @@ export function refForBranch(repo: string, branch: string): AgentRef | null {
   const fromRuns = Object.values(state.runs).find((r) => r.branch === branch)?.ref;
   if (fromRuns) return fromRuns;
   return Object.values(state.issues ?? {}).find((i) => i.branch === branch)?.ref ?? null;
+}
+
+// Point a branch at a new agent ref (auto-recover / adoptBranch spawns a fresh agent → future
+// follow-ups target it). Updates the existing run/issue record, or adds a synthetic run.
+export function setRefForBranch(repo: string, branch: string, ref: AgentRef): void {
+  const state = loadState(repo);
+  const run = Object.values(state.runs).find((r) => r.branch === branch);
+  if (run) {
+    run.ref = ref;
+    saveState(repo, state);
+    return;
+  }
+  const issue = Object.values(state.issues ?? {}).find((i) => i.branch === branch);
+  if (issue) {
+    issue.ref = ref;
+    saveState(repo, state);
+    return;
+  }
+  state.runs[`recover:${branch}`] = {
+    specId: `recover:${branch}`,
+    specPath: '',
+    ref,
+    base: '',
+    branch,
+    prUrl: null,
+    dispatchedAt: new Date().toISOString(),
+  };
+  saveState(repo, state);
+}
+
+export function getRework(repo: string, pr: number): ReworkRecord | null {
+  return loadState(repo).rework?.[String(pr)] ?? null;
+}
+
+export function setRework(repo: string, pr: number, rec: ReworkRecord): void {
+  const state = loadState(repo);
+  state.rework ??= {};
+  state.rework[String(pr)] = rec;
+  saveState(repo, state);
+}
+
+export function clearRework(repo: string, pr: number): void {
+  const state = loadState(repo);
+  if (state.rework?.[String(pr)]) {
+    delete state.rework[String(pr)];
+    saveState(repo, state);
+  }
 }
 
 export function loadReviewed(repo: string): Record<string, string> {

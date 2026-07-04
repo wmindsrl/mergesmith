@@ -5,7 +5,7 @@ import { addLabels, approve, comment, mergeAuto, prMergeable, removeLabels, requ
 import { threadedPost } from '../thread.js';
 import { getImplementer } from '../providers/registry.js';
 import { FollowupError, type Verdict } from '../providers/types.js';
-import { issueForBranch, markIssueDone, markReviewed, refForBranch } from './state.js';
+import { issueForBranch, markIssueDone, markReviewed, refForBranch, setRefForBranch, setRework } from './state.js';
 
 function firstLine(text: string): string {
   return text.split('\n')[0] ?? text;
@@ -48,23 +48,23 @@ export async function applyVerdict(
     requestChanges(config, pr, verdictBody(verdict));
     setLabels([L.rework], [L.approved, L.needsHuman]);
 
+    const fixPrompt = verdict.followupMessage ?? verdict.rationale;
+    const impl = getImplementer(config);
     const ref = refForBranch(config.repo, branch);
-    if (!ref) {
-      // Can't drive the REWORK (no implementer agent tracked): flag it for a human
-      // instead of silently marking it done — otherwise the PR deadlocks invisibly.
-      if (L.enabled) addLabels(config, pr, [L.needsHuman]);
-      markReviewed(config.repo, pr, sha);
-      await threadedPost(
-        config,
-        pr,
-        `:warning: REQUEST_CHANGES PR #${pr} ma nessun agent noto per \`${branch}\` — serve fix manuale (flaggata needs-human)`,
-        { mention: true },
-      );
-      return;
-    }
     try {
-      await getImplementer(config).followup(ref, verdict.followupMessage ?? verdict.rationale);
+      if (ref) {
+        await impl.followup(ref, fixPrompt);
+      } else if (impl.adoptBranch) {
+        // No tracked agent → spawn a FRESH one on the branch to drive the rework (the tick then
+        // watches it and auto-recovers again if it stalls). No more silent needs-human here.
+        const res = await impl.adoptBranch(config.repo, branch, fixPrompt);
+        setRefForBranch(config.repo, branch, res.ref);
+      } else {
+        throw new Error(`nessun agent noto per ${branch} e il provider non supporta adoptBranch`);
+      }
       markReviewed(config.repo, pr, sha);
+      // Arm the rework watchdog: the tick verifies this follow-up lands a new SHA, else recovers.
+      setRework(config.repo, pr, { sha, followupAt: Date.now(), attempts: 0, fixPrompt });
       await threadedPost(config, pr, `:no_entry: REQUEST_CHANGES PR #${pr} — ${firstLine(verdict.rationale)}${attributionSuffix(verdict)}`);
     } catch (error) {
       if (error instanceof FollowupError && (error.kind === 'busy' || error.kind === 'transient')) {
@@ -73,10 +73,10 @@ export async function applyVerdict(
         await threadedPost(config, pr, `:hourglass: PR #${pr}: REQUEST_CHANGES su GitHub ma ${why} — retry al prossimo tick`);
         return;
       }
-      // Fallimento permanente (agent morto/expired): flagga + marca così non si ri-notifica ogni tick.
+      // Couldn't start the rework (no agent + adopt failed / permanent error) → a human must look.
       if (L.enabled) addLabels(config, pr, [L.needsHuman]);
       markReviewed(config.repo, pr, sha);
-      await threadedPost(config, pr, `:warning: PR #${pr}: follow-up fallito (${String(error)}) — flaggata needs-human`, {
+      await threadedPost(config, pr, `:warning: PR #${pr}: rework non avviabile (${String(error)}) — flaggata needs-human`, {
         mention: true,
       });
     }

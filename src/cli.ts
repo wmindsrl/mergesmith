@@ -6,7 +6,7 @@ import { readJson } from './lib.js';
 import { dispatchSpec } from './orchestrator/dispatch.js';
 import { dispatchIssue } from './orchestrator/issue.js';
 import { tickAll, tickRepo } from './orchestrator/tick.js';
-import { markReviewed, refForBranch } from './orchestrator/state.js';
+import { markReviewed, refForBranch, setRefForBranch } from './orchestrator/state.js';
 import { getImplementer, getVerifier } from './providers/registry.js';
 import { ensureLabel } from './github.js';
 import { FollowupError } from './providers/types.js';
@@ -87,14 +87,21 @@ async function main(): Promise<void> {
       const message = argValue(rest, '--message');
       if (!branch || !message) throw new Error('Uso: mergesmith followup --branch <name> --message "<testo>"');
       const config = loadConfig();
+      const impl = getImplementer(config);
       const ref = refForBranch(config.repo, branch);
-      if (!ref) {
-        console.error(`✗ nessun agent noto per il branch "${branch}"`);
-        process.exit(3);
-      }
       try {
-        await getImplementer(config).followup(ref, message);
-        console.log(`✓ follow-up inviato (${branch})`);
+        if (ref) {
+          await impl.followup(ref, message);
+          console.log(`✓ follow-up inviato all'agent noto (${branch})`);
+        } else if (impl.adoptBranch) {
+          // No tracked agent → spawn a fresh one bound to the branch (also the auto-recover path).
+          const res = await impl.adoptBranch(config.repo, branch, message);
+          setRefForBranch(config.repo, branch, res.ref);
+          console.log(`✓ nessun agent noto — spawnato agent fresco sul branch (${branch})`);
+        } else {
+          console.error(`✗ nessun agent noto per "${branch}" e il provider non supporta adoptBranch`);
+          process.exit(3);
+        }
       } catch (error) {
         if (error instanceof FollowupError && error.kind === 'busy') {
           console.error(`✗ agent occupato: ${error.message}`);

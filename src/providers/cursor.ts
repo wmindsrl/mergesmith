@@ -164,5 +164,40 @@ export function createCursorProvider(opts: {
         prUrl: first?.prUrl ?? null,
       };
     },
+
+    async adoptBranch(repo: string, branch: string, prompt: string): Promise<DispatchResult> {
+      const model = opts.model;
+      const payload: Record<string, unknown> = {
+        prompt: { text: prompt },
+        repos: [{ url: `https://github.com/${repo}`, startingRef: branch }],
+        workOnCurrentBranch: true, // edit + push the existing branch; the PR already exists
+        autoCreatePR: false,
+        ...(model ? { model: { id: model } } : {}),
+      };
+      const created = (await cursorFetch(opts.apiKeyEnv, '/v1/agents', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      })) as { id?: string; latestRunId?: string; runId?: string; agent?: { id: string; latestRunId?: string }; run?: { id: string } };
+      const agentId = created.agent?.id ?? created.id ?? '';
+      const runId = created.run?.id ?? created.agent?.latestRunId ?? created.latestRunId ?? created.runId ?? '';
+      if (!agentId) throw new Error(`Risposta Cursor senza agent id: ${JSON.stringify(created)}`);
+      return { ref: { provider: 'cursor', agentId, ...(runId ? { runId } : {}) }, branch, prUrl: null };
+    },
+
+    // The agent's LATEST run (not the original) — a follow-up creates a new run; if that run is
+    // FINISHED and no commit landed, the follow-up didn't take. Fail-safe: on error return false
+    // (assume still working) so we never recover a live agent prematurely.
+    async agentIdle(ref: AgentRef): Promise<boolean> {
+      try {
+        const agent = (await cursorFetch(opts.apiKeyEnv, `/v1/agents/${ref.agentId}`)) as { latestRunId?: string };
+        const runId = agent.latestRunId ?? ref.runId;
+        if (!runId) return false;
+        const run = (await cursorFetch(opts.apiKeyEnv, `/v1/agents/${ref.agentId}/runs/${runId}`)) as RunInfo;
+        const state = run.status ? STATUS_MAP[run.status] : undefined;
+        return state === 'finished' || state === 'error' || state === 'expired';
+      } catch {
+        return false;
+      }
+    },
   };
 }

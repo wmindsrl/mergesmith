@@ -10,7 +10,9 @@ import { postSlack } from '../slack.js';
 import { threadedPost } from '../thread.js';
 import { FollowupError, type ImplementerProvider } from '../providers/types.js';
 import {
+  clearRework,
   getBranchThread,
+  getRework,
   getThread,
   knownBranches,
   loadReviewed,
@@ -18,7 +20,10 @@ import {
   markReviewed,
   refForBranch,
   saveState,
+  setRefForBranch,
+  setRework,
   setThread,
+  type ReworkRecord,
 } from './state.js';
 import { applyVerdict } from './act.js';
 import { runReadyIssues } from './issue.js';
@@ -84,6 +89,26 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
     // needs-human = l'umano possiede questa PR: il loop si tira indietro (niente ri-review /
     // ri-ping a ogni push finché la label non viene rimossa).
     if (config.labels.enabled && pr.labels.includes(config.labels.needsHuman)) continue;
+
+    // Rework watchdog: a REQUEST_CHANGES follow-up must produce a new SHA. If it did, the agent
+    // delivered → re-review. If not and the agent has stalled (closed its run without pushing, or
+    // TTL elapsed), auto-recover with a fresh agent; after MAX_RECOVER attempts → needs-human.
+    if (!opts.dryRun) {
+      const rework = getRework(config.repo, pr.number);
+      if (rework) {
+        if (pr.headRefOid !== rework.sha) {
+          clearRework(config.repo, pr.number); // delivered → fall through to a fresh review
+        } else {
+          try {
+            await handleReworkStall(config, impl, pr.number, pr.headRefName, rework);
+          } catch (error) {
+            console.error(`✗ rework-watchdog PR #${pr.number}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+          continue; // same SHA → don't re-review; wait / recovered / escalated
+        }
+      }
+    }
+
     if (reviewed[String(pr.number)] === pr.headRefOid) continue;
 
     try {
@@ -129,6 +154,52 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
     await reportStuckRuns(config, impl);
     writeJson(heartbeatPath(config.repo), { lastTick: new Date().toISOString() });
   }
+}
+
+const REWORK_GRACE_MS = 5 * 60 * 1000; // don't judge a follow-up before its run has a chance to start
+const REWORK_STALL_TTL_MS = 25 * 60 * 1000; // hard fallback when the agent's run state is unreadable
+const MAX_RECOVER = 2;
+
+// A rework whose SHA hasn't moved: decide wait / auto-recover / escalate.
+async function handleReworkStall(
+  config: MergesmithConfig,
+  impl: ImplementerProvider,
+  pr: number,
+  branch: string,
+  rework: ReworkRecord,
+): Promise<void> {
+  const elapsed = Date.now() - rework.followupAt;
+  if (elapsed < REWORK_GRACE_MS) return; // give the follow-up run time to start + work
+
+  const ref = refForBranch(config.repo, branch);
+  let stalled = elapsed > REWORK_STALL_TTL_MS;
+  if (!stalled && ref && impl.agentIdle) {
+    // Agent's latest run finished but no new SHA landed → it closed without pushing = stalled.
+    stalled = await impl.agentIdle(ref);
+  }
+  if (!stalled) return; // still working — wait for the next tick
+
+  if (rework.attempts < MAX_RECOVER && impl.adoptBranch) {
+    const res = await impl.adoptBranch(config.repo, branch, rework.fixPrompt);
+    setRefForBranch(config.repo, branch, res.ref);
+    setRework(config.repo, pr, { ...rework, followupAt: Date.now(), attempts: rework.attempts + 1 });
+    await threadedPost(
+      config,
+      pr,
+      `:recycle: PR #${pr}: rework fermo (l'agent ha chiuso senza pushare) — riparto con un agent fresco sul branch (tentativo ${rework.attempts + 1}/${MAX_RECOVER})`,
+    );
+    return;
+  }
+
+  // Recovery exhausted (or no adoptBranch) → a genuine human call: the implementer won't self-fix.
+  clearRework(config.repo, pr);
+  if (config.labels.enabled) addLabels(config, pr, [config.labels.needsHuman]);
+  await threadedPost(
+    config,
+    pr,
+    `:warning: PR #${pr}: rework fermo dopo ${rework.attempts} tentativi di auto-recover — l'implementer non applica il fix, serve la tua mano`,
+    { mention: true },
+  );
 }
 
 async function handleCiRed(
