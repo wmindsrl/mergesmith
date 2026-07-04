@@ -111,6 +111,14 @@ export async function addReaction(slack: SlackConfig, channel: string, ts: strin
   }
 }
 
+export async function removeReaction(slack: SlackConfig, channel: string, ts: string, name: string): Promise<void> {
+  try {
+    await slackForm(slack, 'reactions.remove', { channel, timestamp: ts, name });
+  } catch (error) {
+    if (!String(error).includes('no_reaction')) throw error; // not present is fine
+  }
+}
+
 export async function getPermalink(slack: SlackConfig, channel: string, ts: string): Promise<string | null> {
   try {
     const data = await slackForm<{ permalink: string }>(slack, 'chat.getPermalink', {

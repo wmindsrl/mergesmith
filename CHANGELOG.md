@@ -5,6 +5,11 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] — 2026-07-04
+
+### Added
+- **Reaction di stato "a colpo d'occhio" su Slack** (idea di Marco). Il messaggio radice della PR (il `:rocket: Dispatch`, che sta nella lista del canale) porta ora una **singola emoji di stato**, così scorrendo il canale si vede subito quali PR sono finite e quali no senza aprire il thread: ✅ mergiato · 🔄 rework · 🔴 CI rossa · ⚠️ needs-human · 🚨 stallo. Impostata a ogni transizione (`act.ts` + `tick.ts`), con remove-old + add-new così resta solo lo stato corrente. Nuovi `removeReaction` (slack.ts) + `setStateReaction` (thread.ts). Il thread continua a ricevere i messaggi come prima — la reaction è il riassunto visivo.
+
 ## [0.5.0] — 2026-07-04
 
 ### Added

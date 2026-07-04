@@ -2,8 +2,36 @@
 // the same PR is a reply in it, so the whole lifecycle (dispatch → CI → review → merge) lives
 // in one place. Passive: mentions only when a human must act.
 import type { MergesmithConfig } from './config.js';
-import { postSlack } from './slack.js';
+import { addReaction, postSlack, removeReaction } from './slack.js';
 import { getThread, setThread } from './orchestrator/state.js';
+
+// State → single emoji on the PR's ROOT (:rocket: Dispatch) message, so the channel list shows
+// each PR's status at a glance without opening the thread. One state = one emoji: we add the new
+// one and clear the others (Slack reactions accumulate otherwise).
+const STATE_EMOJI = {
+  merged: 'white_check_mark', //   ✅ mergiato
+  rework: 'arrows_counterclockwise', // 🔄 rework in corso
+  ci_red: 'red_circle', //          🔴 CI rossa
+  needs_human: 'warning', //        ⚠️ serve un umano (needs-human / path critico)
+  stalled: 'rotating_light', //     🚨 stallo / agent morto
+} as const;
+export type PrState = keyof typeof STATE_EMOJI;
+const ALL_STATE_EMOJI: string[] = Object.values(STATE_EMOJI);
+
+/** Set the glance-status reaction on the PR's root message. Best-effort (never aborts the loop). */
+export async function setStateReaction(config: MergesmithConfig, pr: number, state: PrState): Promise<void> {
+  const root = getThread(config.repo, pr);
+  if (!root) return; // no thread anchored yet → nothing to react to
+  const want = STATE_EMOJI[state];
+  try {
+    await addReaction(config.slack, root.channel, root.ts, want); // add first → no "no emoji" flicker
+    for (const emoji of ALL_STATE_EMOJI) {
+      if (emoji !== want) await removeReaction(config.slack, root.channel, root.ts, emoji);
+    }
+  } catch (err) {
+    console.error(`Slack reaction (PR #${pr} → ${state}) fallita: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 
 export async function threadedPost(
   config: MergesmithConfig,

@@ -2,7 +2,7 @@
 // Every verifier funnels through here, so merge/gate policy lives in exactly one place.
 import type { MergesmithConfig } from '../config.js';
 import { addLabels, approve, comment, mergeAuto, prMergeable, removeLabels, requestChanges } from '../github.js';
-import { threadedPost } from '../thread.js';
+import { setStateReaction, threadedPost } from '../thread.js';
 import { getImplementer } from '../providers/registry.js';
 import { FollowupError, type Verdict } from '../providers/types.js';
 import { issueForBranch, markIssueDone, markReviewed, refForBranch, setRefForBranch, setRework } from './state.js';
@@ -66,6 +66,7 @@ export async function applyVerdict(
       // Arm the rework watchdog: the tick verifies this follow-up lands a new SHA, else recovers.
       setRework(config.repo, pr, { sha, followupAt: Date.now(), attempts: 0, fixPrompt });
       await threadedPost(config, pr, `:no_entry: REQUEST_CHANGES PR #${pr} — ${firstLine(verdict.rationale)}${attributionSuffix(verdict)}`);
+      await setStateReaction(config, pr, 'rework');
     } catch (error) {
       if (error instanceof FollowupError && (error.kind === 'busy' || error.kind === 'transient')) {
         // Do NOT mark the SHA: the tick retries next round (dedup avoids duplicate comments).
@@ -79,6 +80,7 @@ export async function applyVerdict(
       await threadedPost(config, pr, `:warning: PR #${pr}: rework non avviabile (${String(error)}) — flaggata needs-human`, {
         mention: true,
       });
+      await setStateReaction(config, pr, 'needs_human');
     }
     return;
   }
@@ -95,6 +97,7 @@ export async function applyVerdict(
     await threadedPost(config, pr, `:hourglass: PR #${pr} ok per il verifier ma tocca un path critico: serve la tua review${attributionSuffix(verdict)}`, {
       mention: true,
     });
+    await setStateReaction(config, pr, 'needs_human');
     return;
   }
 
@@ -126,6 +129,7 @@ export async function applyVerdict(
           pr,
           `:twisted_rightwards_arrows: PR #${pr} approvata ma in conflitto con \`${config.base}\` — rebase automatico richiesto all'agent (nessun intervento umano)`,
         );
+        await setStateReaction(config, pr, 'rework');
         return;
       } catch (followupErr) {
         // Busy/transient → retry next tick; permanent → fall through to needs-human below.
@@ -143,6 +147,7 @@ export async function applyVerdict(
       `:warning: PR #${pr} APPROVE ma merge fallito (${String(error)}) — serve un occhio`,
       { mention: true },
     );
+    await setStateReaction(config, pr, 'needs_human');
     return;
   }
   setLabels([L.approved], [L.rework, L.needsHuman]);
@@ -166,4 +171,5 @@ export async function applyVerdict(
     `:white_check_mark: APPROVE PR #${pr} — auto-merge attivo${attributionSuffix(verdict)}` +
       `${issue ? ` (issue #${issue.issueNumber} → completed)` : ''}`,
   );
+  await setStateReaction(config, pr, 'merged');
 }

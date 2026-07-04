@@ -8,7 +8,7 @@ import { readJson, writeJson } from '../lib.js';
 import { addLabels, branchHead, ciState, listOpenPRs, prStatesForBranch } from '../github.js';
 import { getImplementer, getVerifier } from '../providers/registry.js';
 import { postSlack } from '../slack.js';
-import { threadedPost } from '../thread.js';
+import { setStateReaction, threadedPost } from '../thread.js';
 import { FollowupError, type ImplementerProvider } from '../providers/types.js';
 import {
   clearRework,
@@ -281,6 +281,7 @@ async function handleReworkStall(
       pr,
       `:recycle: PR #${pr}: rework fermo (l'agent ha chiuso senza pushare) — riparto con un agent fresco sul branch (tentativo ${rework.attempts + 1}/${MAX_RECOVER})`,
     );
+    await setStateReaction(config, pr, 'rework');
     return;
   }
 
@@ -293,6 +294,7 @@ async function handleReworkStall(
     `:warning: PR #${pr}: rework fermo dopo ${rework.attempts} tentativi di auto-recover — l'implementer non applica il fix, serve la tua mano`,
     { mention: true },
   );
+  await setStateReaction(config, pr, 'needs_human');
 }
 
 async function handleCiRed(
@@ -311,11 +313,13 @@ async function handleCiRed(
       mention: true,
     });
     markReviewed(config.repo, pr, `${sha}:ci-red`);
+    await setStateReaction(config, pr, 'needs_human');
     return;
   }
   try {
     await impl.followup(ref, `CI is red on PR #${pr}. Check the failing jobs on GitHub, fix them and push.`);
     markReviewed(config.repo, pr, `${sha}:ci-red`);
+    await setStateReaction(config, pr, 'ci_red');
   } catch (error) {
     if (error instanceof FollowupError && (error.kind === 'busy' || error.kind === 'transient')) return; // retry next tick
     // Fallimento permanente (agent morto/expired): flagga + marca così NON si ri-notifica ogni tick.
@@ -324,6 +328,7 @@ async function handleCiRed(
     await threadedPost(config, pr, `:warning: PR #${pr}: CI rossa e follow-up fallito (${String(error)}) — flaggata needs-human`, {
       mention: true,
     });
+    await setStateReaction(config, pr, 'needs_human');
   }
 }
 
