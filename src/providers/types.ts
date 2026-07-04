@@ -32,6 +32,9 @@ export interface DispatchInput {
   repo: string;
   base: string;
   model?: string;
+  /** 0.5.0: mergesmith pre-created this branch (spec committed inside). When set, the agent works
+   * ON it (workOnCurrentBranch) and opens the PR from it — the branch is deterministic, known at t=0. */
+  branch?: string;
 }
 
 export interface DispatchResult {

@@ -79,6 +79,69 @@ export function specExistsOnBase(config: MergesmithConfig, specPath: string, bas
   return out !== null && out.length > 0;
 }
 
+// --- 0.5.0: mergesmith-owned branch (spec committed inside) ---
+
+/** True if `branch` exists on the remote. */
+export function branchExists(config: MergesmithConfig, branch: string): boolean {
+  const out = tryRun(config, ['api', `repos/${config.repo}/git/ref/heads/${branch}`, '--jq', '.object.sha']);
+  return out !== null && out.length > 0;
+}
+
+/** Current tip SHA of `branch`, or null if the branch is gone (agent stall vs work delivered). */
+export function branchHead(config: MergesmithConfig, branch: string): string | null {
+  const out = tryRun(config, ['api', `repos/${config.repo}/git/ref/heads/${branch}`, '--jq', '.object.sha']);
+  return out && out.length > 0 ? out : null;
+}
+
+/** PR states (any status) whose head is `branch`. Empty ⇒ the agent never opened a PR (stall candidate);
+ * non-empty all-non-OPEN ⇒ the run's PR merged/closed (the run is finished). */
+export function prStatesForBranch(config: MergesmithConfig, branch: string): string[] {
+  const out = tryRun(config, [
+    'pr', 'list', '--repo', config.repo, '--head', branch, '--state', 'all', '--json', 'state', '--jq', '.[].state',
+  ]);
+  return out ? out.split('\n').filter((s) => s.length > 0) : [];
+}
+
+/**
+ * Create (or force-reset, on re-dispatch) `branch` off `base` with `specContent` committed at
+ * `specPath`. Returns the commit SHA — the *specSha*, the stall-detection baseline: after the run
+ * finishes, branchHead === specSha means the agent delivered nothing. Pure GitHub Data API: works
+ * from any cwd, no local checkout, no "spec must already be on origin/base" precondition.
+ */
+export function createBranchWithSpec(
+  config: MergesmithConfig,
+  branch: string,
+  base: string,
+  specPath: string,
+  specContent: string,
+): string {
+  const repo = config.repo;
+  const apiPost = (endpoint: string, body: unknown): string =>
+    run(config, ['api', `repos/${repo}/${endpoint}`, '--method', 'POST', '--input', '-', '--jq', '.sha'], JSON.stringify(body));
+
+  const baseCommitSha = run(config, ['api', `repos/${repo}/git/ref/heads/${base}`, '--jq', '.object.sha']);
+  const baseTreeSha = run(config, ['api', `repos/${repo}/git/commits/${baseCommitSha}`, '--jq', '.tree.sha']);
+  const blobSha = apiPost('git/blobs', { content: specContent, encoding: 'utf-8' });
+  const treeSha = apiPost('git/trees', {
+    base_tree: baseTreeSha,
+    tree: [{ path: specPath, mode: '100644', type: 'blob', sha: blobSha }],
+  });
+  const commitSha = apiPost('git/commits', {
+    message: `spec: ${specPath}`,
+    tree: treeSha,
+    parents: [baseCommitSha],
+  });
+  if (branchExists(config, branch)) {
+    // Re-dispatch onto a leftover branch → force the ref to the fresh spec commit.
+    run(config, ['api', `repos/${repo}/git/refs/heads/${branch}`, '--method', 'PATCH', '--input', '-'],
+      JSON.stringify({ sha: commitSha, force: true }));
+  } else {
+    run(config, ['api', `repos/${repo}/git/refs`, '--method', 'POST', '--input', '-'],
+      JSON.stringify({ ref: `refs/heads/${branch}`, sha: commitSha }));
+  }
+  return commitSha;
+}
+
 export function approve(config: MergesmithConfig, pr: number, body: string): void {
   run(config, ['pr', 'review', String(pr), '--repo', config.repo, '--approve', '--body', body]);
 }

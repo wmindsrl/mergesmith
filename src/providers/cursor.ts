@@ -90,9 +90,13 @@ export function createCursorProvider(opts: {
         const ids = (models.items ?? []).map((m) => m.id).join(', ');
         throw new Error(`Nessun model per il provider cursor. Imposta implementer.model. Disponibili: ${ids}`);
       }
+      // 0.5.0: if mergesmith pre-created the branch (spec inside), work ON it and still open the PR.
+      // Validated live (POC PR #123): workOnCurrentBranch:true + autoCreatePR:true commits to the given
+      // branch and opens the PR from it. Otherwise, legacy mode: Cursor branches off base itself.
       const payload = {
         prompt: { text: input.prompt },
-        repos: [{ url: `https://github.com/${input.repo}`, startingRef: input.base }],
+        repos: [{ url: `https://github.com/${input.repo}`, startingRef: input.branch ?? input.base }],
+        ...(input.branch ? { workOnCurrentBranch: true } : {}),
         autoCreatePR: true,
         model: { id: model },
       };

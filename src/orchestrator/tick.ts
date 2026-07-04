@@ -1,10 +1,11 @@
 // Stage-1 poll (cron entrypoint): cheap, provider-agnostic. For each agent-managed PR,
 // gate on CI, then let the verifier judge (green) or send a fix follow-up (red).
 import { existsSync } from 'node:fs';
+import { basename } from 'node:path';
 import { heartbeatPath, loadConfig, pausedFlagPath, reposRegistryPath, type MergesmithConfig } from '../config.js';
 import { acquireRepoLock } from '../lock.js';
 import { readJson, writeJson } from '../lib.js';
-import { addLabels, ciState, listOpenPRs } from '../github.js';
+import { addLabels, branchHead, ciState, listOpenPRs, prStatesForBranch } from '../github.js';
 import { getImplementer, getVerifier } from '../providers/registry.js';
 import { postSlack } from '../slack.js';
 import { threadedPost } from '../thread.js';
@@ -151,9 +152,101 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
   }
 
   if (!opts.dryRun) {
+    await sweepDispatchStalls(config, impl);
     await reportStuckRuns(config, impl);
     writeJson(heartbeatPath(config.repo), { lastTick: new Date().toISOString() });
   }
+}
+
+const DISPATCH_GRACE_MS = 5 * 60 * 1000; // give a fresh dispatch time to start + work before judging
+const MAX_DISPATCH_RECOVER = 2;
+
+// --- pure decision core (unit-tested; the I/O wrapper below feeds it live values) ---
+
+/** What the branch's PR history says about a dispatched run. */
+export function prGateAction(prStates: string[]): 'none' | 'open' | 'merged' {
+  if (prStates.length === 0) return 'none'; // agent never opened a PR → stall candidate
+  return prStates.every((s) => s !== 'OPEN') ? 'merged' : 'open';
+}
+
+/** Given a finished run with NO PR: did it deliver, and what should we do about it? */
+export function noOpRecovery(
+  head: string | null,
+  specSha: string,
+  attempts: number,
+  max: number,
+): 'gone' | 'giveup' | 'nudge' | 'recover' {
+  if (head === null) return 'gone'; // mergesmith-created branch vanished without a PR — anomalous
+  if (attempts >= max) return 'giveup';
+  return head !== specSha ? 'nudge' : 'recover'; // committed-but-no-PR vs pure no-op
+}
+
+// 0.5.0: initial-dispatch stall sweep. A run whose branch mergesmith pre-created (specSha set) but that
+// never opened a PR is invisible to the per-PR loop. This catches the exact overnight failure (agent
+// finished without delivering): run FINISHED + branchHead === specSha ⇒ no-op → auto-recover; committed
+// but no PR ⇒ nudge to open it; both bounded by recoverAttempts, then needs-human.
+async function sweepDispatchStalls(config: MergesmithConfig, impl: ImplementerProvider): Promise<void> {
+  const state = loadState(config.repo);
+  const openBranches = new Set(listOpenPRs(config).map((p) => p.headRefName));
+  let changed = false;
+
+  for (const [id, rec] of Object.entries(state.runs)) {
+    if (rec.done || !rec.branch || !rec.specSha || !rec.ref?.agentId) continue; // legacy runs have no specSha
+    if (openBranches.has(rec.branch)) continue; // PR open → per-PR loop / rework watchdog owns it
+    if (Date.now() - new Date(rec.dispatchedAt).getTime() < DISPATCH_GRACE_MS) continue;
+
+    const gate = prGateAction(prStatesForBranch(config, rec.branch));
+    if (gate === 'open') continue; // race with openBranches → per-PR loop owns it
+    if (gate === 'merged') {
+      rec.done = true; // the run's PR merged/closed → nothing left to sweep
+      changed = true;
+      continue;
+    }
+
+    let idle = false;
+    try {
+      idle = impl.agentIdle ? await impl.agentIdle(rec.ref) : false;
+    } catch {
+      continue; // status unreadable → try next tick
+    }
+    if (!idle) continue; // still working
+
+    const attempts = rec.recoverAttempts ?? 0;
+    const action = noOpRecovery(branchHead(config, rec.branch), rec.specSha, attempts, MAX_DISPATCH_RECOVER);
+    try {
+      if (action === 'gone') {
+        rec.done = true;
+        changed = true;
+        await postSlack(config.slack, `:warning: dispatch \`${id}\`: branch \`${rec.branch}\` sparito senza PR — serve un occhio`, { mention: true });
+      } else if (action === 'giveup') {
+        rec.done = true;
+        changed = true;
+        await postSlack(config.slack, `:warning: dispatch \`${id}\` (\`${rec.branch}\`) fermo dopo ${attempts} recovery — l'agent non consegna, serve la tua mano`, { mention: true });
+      } else if (action === 'nudge') {
+        // Work is on the branch, only the PR is missing → nudge the same agent to open it.
+        await impl.followup(rec.ref, `You committed to \`${rec.branch}\` but no PR is open. Open a PR to \`${rec.base}\` (ready for review, NOT draft).`);
+        rec.recoverAttempts = attempts + 1;
+        changed = true;
+        await postSlack(config.slack, `:arrows_counterclockwise: dispatch \`${id}\`: codice sul branch ma niente PR — sollecito apertura (${attempts + 1}/${MAX_DISPATCH_RECOVER})`);
+      } else if (action === 'recover' && impl.adoptBranch) {
+        // Pure no-op (branchHead === specSha) → spawn a fresh agent on the same branch to redo it.
+        const res = await impl.adoptBranch(
+          config.repo,
+          rec.branch,
+          `Re-read \`docs/superpowers/specs/${basename(rec.specPath)}\` in this branch and implement it — the previous run finished without committing any code. Commit on THIS branch and open a PR to \`${rec.base}\`.`,
+        );
+        rec.ref = res.ref;
+        rec.recoverAttempts = attempts + 1;
+        changed = true;
+        await postSlack(config.slack, `:recycle: dispatch \`${id}\` no-op (agent finito senza consegnare) — re-dispatch su \`${rec.branch}\` (${attempts + 1}/${MAX_DISPATCH_RECOVER})`);
+      }
+    } catch (error) {
+      if (error instanceof FollowupError && (error.kind === 'busy' || error.kind === 'transient')) continue; // retry next tick
+      console.error(`✗ sweepDispatchStalls ${id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  if (changed) saveState(config.repo, state);
 }
 
 const REWORK_GRACE_MS = 5 * 60 * 1000; // don't judge a follow-up before its run has a chance to start

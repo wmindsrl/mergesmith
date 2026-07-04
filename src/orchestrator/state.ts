@@ -12,6 +12,11 @@ export interface RunRecord {
   prUrl: string | null;
   dispatchedAt: string;
   done?: boolean;
+  /** 0.5.0: SHA of the spec commit mergesmith put on the branch. After the run finishes,
+   * branchHead === specSha ⇒ the agent delivered nothing (no-op stall). */
+  specSha?: string;
+  /** 0.5.0: how many times sweepDispatchStalls has auto-recovered this run (cap before needs-human). */
+  recoverAttempts?: number;
 }
 
 export interface IssueRecord {

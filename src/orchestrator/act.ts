@@ -105,7 +105,15 @@ export async function applyVerdict(
     // Approved but couldn't auto-merge. A merge CONFLICT is agent-recoverable (rebase) — NOT a
     // human decision. needs-human is reserved for business/key calls (critical paths, dead agents).
     const ref = refForBranch(config.repo, branch);
-    if (ref && prMergeable(config, pr) === 'CONFLICTING') {
+    const mergeable = prMergeable(config, pr);
+    if (mergeable === 'UNKNOWN') {
+      // GitHub hasn't finished computing mergeability yet — transient, NOT a human decision (this was
+      // the false needs-human on #119). Retry next tick: do NOT markReviewed (that freezes the SHA) and
+      // do NOT escalate. Cost: one possible re-verify next tick; mergeability resolves in seconds.
+      await threadedPost(config, pr, `:hourglass: PR #${pr} approvata, mergeability ancora in calcolo — merge al prossimo tick`);
+      return;
+    }
+    if (ref && mergeable === 'CONFLICTING') {
       try {
         await getImplementer(config).followup(
           ref,

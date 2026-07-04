@@ -5,6 +5,15 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] — 2026-07-04
+
+### Added
+- **mergesmith owns the branch (spec-in-branch dispatch).** `dispatch` ora crea un branch deterministico (`fm.branch`) dalla base **committandoci dentro la spec** (via GitHub Data API — `createBranchWithSpec`, nessun checkout locale), poi manda l'agent a lavorare su quel branch (`workOnCurrentBranch:true`) mentre Cursor apre la PR (`autoCreatePR:true`). Validato live (POC PR #123 + smoke test API). Elimina la precondizione "spec già su origin/base" + tutto l'attrito materialize/path. `branch` noto e `specSha` registrato da t=0.
+- **Stall detection iniziale + auto-recover (`sweepDispatchStalls`).** Cattura il fallimento che prima era invisibile e manuale (agent finito senza aprire PR): run FINISHED + `branchHead === specSha` ⇒ no-op → re-dispatch sul branch (`adoptBranch`); committato ma senza PR ⇒ sollecito apertura; bounded (2), poi needs-human. Core decisionale puro e testato (`prGateAction`/`noOpRecovery`).
+
+### Fixed
+- **`mergeable == UNKNOWN` non è più needs-human.** Un APPROVE il cui auto-merge fallisce mentre GitHub sta ancora calcolando la mergeability veniva escalato a needs-human (falso, visto su #119). Ora ritenta al tick successivo. needs-human resta solo per fallimenti merge genuini / path critici / agent morto.
+
 ## [0.4.0] — 2026-07-04
 
 ### Added
