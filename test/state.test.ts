@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import {
   getThread,
   setThread,
+  getBranchThread,
+  setBranchThread,
   recordIssue,
   issueForBranch,
   refForBranch,
@@ -38,6 +40,19 @@ test('threads: null before set, round-trips after, scoped per pr', () => {
     assert.equal(getThread(repo, 99), null);
     setThread(repo, 99, '1700000000.000200', 'C123');
     assert.deepEqual(getThread(repo, 42), { ts: '1700000000.000100', channel: 'C123' });
+  });
+});
+
+test('branch thread: dispatch stores by branch, adoptable as the PR thread root', () => {
+  withHome(() => {
+    const repo = 'org/app';
+    setBranchThread(repo, 'cursor/x', 'ts-x', 'C1');
+    assert.deepEqual(getBranchThread(repo, 'cursor/x'), { ts: 'ts-x', channel: 'C1' });
+    assert.equal(getBranchThread(repo, 'cursor/other'), null);
+    // The tick adopts the dispatch thread as the PR's thread → later events thread under it.
+    const bt = getBranchThread(repo, 'cursor/x')!;
+    setThread(repo, 5, bt.ts, bt.channel);
+    assert.deepEqual(getThread(repo, 5), { ts: 'ts-x', channel: 'C1' });
   });
 });
 

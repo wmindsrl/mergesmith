@@ -6,7 +6,7 @@ import type { MergesmithConfig } from '../config.js';
 import { specExistsOnBase } from '../github.js';
 import { getImplementer } from '../providers/registry.js';
 import { postSlack } from '../slack.js';
-import { loadState, saveState } from './state.js';
+import { loadState, saveState, setBranchThread } from './state.js';
 
 export async function dispatchSpec(config: MergesmithConfig, specPath: string): Promise<void> {
   const markdown = readFileSync(specPath, 'utf8'); // throws with a clear ENOENT if missing
@@ -50,11 +50,13 @@ export async function dispatchSpec(config: MergesmithConfig, specPath: string): 
     const engineLabel = config.implementer.model
       ? `${config.implementer.provider}/${config.implementer.model}`
       : config.implementer.provider;
-    await postSlack(
+    const res = await postSlack(
       config.slack,
       `:rocket: *Dispatch* — spec \`${fm.id}\` inviata a ${engineLabel} ` +
         `(base \`${fm.base}\`, ${branchInfo})${result.prUrl ? `\nPR: ${result.prUrl}` : ''}`,
     );
+    // Make this the root of the PR's thread so verdicts/merge thread under a readable message.
+    if (result.branch) setBranchThread(config.repo, result.branch, res.ts, res.channel);
   } catch (error) {
     // The dispatch DID succeed: don't fail (a retry would create a duplicate agent).
     console.error(`⚠ dispatch riuscito ma notifica Slack fallita: ${error}`);

@@ -6,7 +6,7 @@ import type { MergesmithConfig } from '../config.js';
 import { addLabels, getIssue, listOpenIssuesWithLabel, removeLabels, type IssueMeta } from '../github.js';
 import { getImplementer } from '../providers/registry.js';
 import { postSlack } from '../slack.js';
-import { issueDispatched, recordIssue } from './state.js';
+import { issueDispatched, recordIssue, setBranchThread } from './state.js';
 
 function issuePrompt(config: MergesmithConfig, issue: IssueMeta, base: string): string {
   return (
@@ -50,11 +50,13 @@ export async function dispatchIssue(config: MergesmithConfig, issueNumber: numbe
     : config.implementer.provider;
   const branchInfo = result.branch ? `branch \`${result.branch}\`` : 'branch in arrivo';
   try {
-    await postSlack(
+    const res = await postSlack(
       config.slack,
       `:rocket: *Dispatch issue #${issueNumber}* — "${issue.title}" → ${engineLabel} (${branchInfo})` +
         `${result.prUrl ? `\nPR: ${result.prUrl}` : ''}`,
     );
+    // Make this the root of the PR's thread so verdicts/merge thread under a readable message.
+    if (result.branch) setBranchThread(config.repo, result.branch, res.ts, res.channel);
   } catch (error) {
     console.error(`⚠ dispatch issue riuscito ma notifica Slack fallita: ${error}`);
   }

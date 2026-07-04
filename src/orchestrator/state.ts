@@ -81,6 +81,20 @@ export function setThread(repo: string, pr: number, ts: string, channel: string)
   saveState(repo, state);
 }
 
+// Dispatch posts a visible ":rocket: Dispatch" message to the channel and stashes its ts keyed by
+// branch; when the tick first sees that branch's PR it adopts this ts as the PR's thread root, so
+// the whole lifecycle threads under the readable dispatch message.
+export function getBranchThread(repo: string, branch: string): ThreadRef | null {
+  return loadState(repo).threads?.[`branch:${branch}`] ?? null;
+}
+
+export function setBranchThread(repo: string, branch: string, ts: string, channel: string): void {
+  const state = loadState(repo);
+  state.threads ??= {};
+  state.threads[`branch:${branch}`] = { ts, channel };
+  saveState(repo, state);
+}
+
 export function recordIssue(repo: string, rec: IssueRecord): void {
   const state = loadState(repo);
   state.issues ??= {};

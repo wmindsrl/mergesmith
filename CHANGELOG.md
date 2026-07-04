@@ -5,6 +5,11 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.5] — 2026-07-04
+
+### Changed
+- **Dispatch messages anchor the PR thread.** The visible `:rocket: Dispatch` post in the channel is now the root of that PR's thread: the tick adopts it (by branch) the first time it sees the PR, so verdicts / rework / merge thread *under* the readable dispatch message. The channel reads as a clean log of what was launched; details are one click away.
+
 ## [0.3.4] — 2026-07-04
 
 ### Fixed

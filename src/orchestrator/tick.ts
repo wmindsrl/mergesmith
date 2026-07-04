@@ -9,7 +9,17 @@ import { getImplementer, getVerifier } from '../providers/registry.js';
 import { postSlack } from '../slack.js';
 import { threadedPost } from '../thread.js';
 import { FollowupError, type ImplementerProvider } from '../providers/types.js';
-import { knownBranches, loadReviewed, loadState, markReviewed, refForBranch, saveState } from './state.js';
+import {
+  getBranchThread,
+  getThread,
+  knownBranches,
+  loadReviewed,
+  loadState,
+  markReviewed,
+  refForBranch,
+  saveState,
+  setThread,
+} from './state.js';
 import { applyVerdict } from './act.js';
 import { runReadyIssues } from './issue.js';
 import { pollInbox } from '../inbox.js';
@@ -79,6 +89,13 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
     try {
       if (config.labels.enabled && !pr.labels.includes(config.labels.managed) && !opts.dryRun) {
         addLabels(config, pr.number, [config.labels.managed]);
+      }
+
+      // First time we see this PR: adopt its dispatch message as the thread root, so the whole
+      // lifecycle threads under the readable ":rocket: Dispatch" message in the channel.
+      if (!opts.dryRun && !getThread(config.repo, pr.number)) {
+        const bt = getBranchThread(config.repo, pr.headRefName);
+        if (bt) setThread(config.repo, pr.number, bt.ts, bt.channel);
       }
 
       const ci = ciState(config, pr.headRefOid);
