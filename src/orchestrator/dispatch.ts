@@ -61,8 +61,9 @@ export async function dispatchSpec(config: MergesmithConfig, specPath: string): 
       : config.implementer.provider;
     const res = await postSlack(
       config.slack,
-      `:rocket: *Dispatch* — spec \`${fm.id}\` inviata a ${engineLabel} ` +
-        `(base \`${fm.base}\`, ${branchInfo})${result.prUrl ? `\nPR: ${result.prUrl}` : ''}`,
+      // Line 2 = the spec title: a one-line "what are we building" summary, scannable in the channel.
+      `:rocket: *Dispatch* — \`${fm.id}\`\n${fm.title}\n` +
+        `→ ${engineLabel} · base \`${fm.base}\` · ${branchInfo}${result.prUrl ? `\nPR: ${result.prUrl}` : ''}`,
     );
     // Make this the root of the PR's thread so verdicts/merge thread under a readable message.
     setBranchThread(config.repo, fm.branch, res.ts, res.channel);
