@@ -5,6 +5,11 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] — 2026-07-06
+
+### Changed
+- **Evidence policy: no screenshot merge gate.** `CONTRACT.base.md`, `SPEC_TEMPLATE.md`, and `validate-pr` now require automated test evidence (Vitest unit, component/render, integration) instead of screenshots. Missing screenshots must never block APPROVE.
+
 ## [0.5.2] — 2026-07-05
 
 ### Added

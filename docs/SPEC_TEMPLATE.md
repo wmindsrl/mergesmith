@@ -24,7 +24,7 @@ criteria sections are mandatory.
     - <forbidden files/dirs and features deliberately excluded>
 
     ## Acceptance criteria (testable, with required evidence)
-    - [ ] <criterion> — expected evidence: <test output / command / screenshot>
+    - [ ] <criterion> — expected evidence: <Vitest test name / integration test / pnpm command output>
 
     ## Technical notes
     <reference patterns with `file:line`, constraints, decisions already made>
