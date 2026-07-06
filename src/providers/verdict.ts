@@ -1,24 +1,28 @@
 // Shared verdict read + FAIL-CLOSED validation for verifier providers.
-// The review CLI (claude / agent) writes this literal file in cwd — its sandbox blocks
-// env-var reads, so we cannot pass a per-PR path in. Both providers read it back here.
+// The review CLI (claude / agent) writes a verdict file in cwd. The PR number is part of the
+// slash-command argument, so the command can (and should) write a PER-PR file
+// (mergesmith-verdict-<pr>.json): concurrent verifies never clobber each other. The legacy
+// un-suffixed file is still read as a fallback for not-yet-updated commands / manual runs.
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Verdict } from './types.js';
 
 export const VERDICT_FILE = 'mergesmith-verdict.json';
 
-export function verdictPath(cwd: string): string {
-  return join(cwd, VERDICT_FILE);
+export function verdictPath(cwd: string, prNumber?: number): string {
+  return join(cwd, prNumber != null ? `mergesmith-verdict-${prNumber}.json` : VERDICT_FILE);
 }
 
 // Read + validate the verdict the review wrote. FAIL-CLOSED: a malformed/incomplete verdict
 // throws (never silently approves). Crucially, a missing/non-boolean `criticalPathHit` is
 // rejected, so it can never let a critical-path PR slip past the human gate.
 export function readVerdict(cwd: string, prNumber: number, engine: string, model?: string): Verdict {
-  const out = join(cwd, VERDICT_FILE);
+  const perPr = verdictPath(cwd, prNumber);
+  const legacy = join(cwd, VERDICT_FILE);
+  const out = existsSync(perPr) ? perPr : legacy;
   if (!existsSync(out)) {
     throw new Error(
-      `verifier ${engine}: nessun verdetto per PR #${prNumber} (${out} assente) — la review non ha scritto ${VERDICT_FILE}`,
+      `verifier ${engine}: nessun verdetto per PR #${prNumber} (${perPr} e ${legacy} assenti) — la review non ha scritto il verdict file`,
     );
   }
   const raw = readFileSync(out, 'utf8');
@@ -28,6 +32,15 @@ export function readVerdict(cwd: string, prNumber: number, engine: string, model
     verdict = JSON.parse(raw) as Verdict;
   } catch {
     throw new Error(`verifier ${engine}: verdict JSON malformato per PR #${prNumber}`);
+  }
+  // FAIL-CLOSED cross-read guard: if the verdict declares which PR it is about (updated
+  // commands write "pr": <n>), a mismatch means we picked up another PR's file (legacy
+  // shared-file race) — reject rather than apply the wrong verdict.
+  const declaredPr = (verdict as { pr?: unknown }).pr;
+  if (declaredPr != null && Number(declaredPr) !== prNumber) {
+    throw new Error(
+      `verifier ${engine}: il verdict letto dichiara PR #${String(declaredPr)} ma era attesa PR #${prNumber} — scartato (race sul file condiviso?)`,
+    );
   }
   if (verdict.decision !== 'APPROVE' && verdict.decision !== 'REQUEST_CHANGES') {
     throw new Error(`verifier ${engine}: decision non valida per PR #${prNumber}: ${JSON.stringify(verdict?.decision)}`);

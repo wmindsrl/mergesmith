@@ -5,7 +5,7 @@ import { basename } from 'node:path';
 import { heartbeatPath, loadConfig, pausedFlagPath, reposRegistryPath, type MergesmithConfig } from '../config.js';
 import { acquireRepoLock } from '../lock.js';
 import { readJson, writeJson } from '../lib.js';
-import { addLabels, branchHead, ciState, listOpenPRs, prStatesForBranch } from '../github.js';
+import { addLabels, branchHead, ciState, listOpenPRs, prStatesForBranch, type OpenPR } from '../github.js';
 import { getImplementer, getVerifier } from '../providers/registry.js';
 import { postSlack } from '../slack.js';
 import { adoptBranchThread, setStateReaction, threadedPost } from '../thread.js';
@@ -41,6 +41,10 @@ export interface TickOptions {
 // Circuit breaker: max failed verify attempts on the same (pr, sha) before parking it for a human.
 // A new push (new SHA) always re-arms the breaker.
 const MAX_VERIFY_ATTEMPTS = 3;
+
+// Concurrent LLM verifies per tick. Reviews are read-only on the shared checkout and write
+// per-PR verdict files, so they parallelize safely; 3 keeps memory/API pressure sane.
+const MAX_CONCURRENT_VERIFY = 3;
 
 export async function tickRepo(config: MergesmithConfig, opts: TickOptions = {}): Promise<void> {
   if (!opts.dryRun && existsSync(pausedFlagPath())) {
@@ -88,6 +92,9 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
       console.error(`✗ ready-issues: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+
+  // PRs whose CI is green and SHA not yet reviewed — verified concurrently after the scan.
+  const toVerify: OpenPR[] = [];
 
   for (const pr of listOpenPRs(config)) {
     if (pr.isDraft) continue;
@@ -140,16 +147,9 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
       }
 
       if (ci === 'green') {
-        const verdict = await verifier.verify({
-          prNumber: pr.number,
-          repo: config.repo,
-          base: config.base,
-          contractRef: config.contract.appendix,
-          codeownersPath: config.criticalPaths,
-          repoPath: opts.repoPath,
-        });
-        await applyVerdict(config, pr.number, pr.headRefOid, pr.headRefName, verdict);
-        clearVerifyFail(config.repo, pr.number, pr.headRefOid);
+        // Queue for the concurrent verify pool below — verifies are the slow LLM stage and
+        // must not serialize the whole queue (one PR at a time was the old bottleneck).
+        toVerify.push(pr);
       } else if (ci === 'red') {
         if (reviewed[String(pr.number)] === `${pr.headRefOid}:ci-red`) continue;
         await handleCiRed(config, impl, pr.number, pr.headRefName, pr.headRefOid);
@@ -157,24 +157,53 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
       // pending / error → skip, retry next tick
     } catch (error) {
       // One PR's failure (network hiccup, gh error) must never abort the whole batch.
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error(`✗ PR #${pr.number}: ${msg} — continuo con le altre`);
-      // Circuit breaker: transient failures may retry on later ticks, but a persistently broken
-      // verify (LLM/API down, bad checkout) must NOT re-run forever at tick frequency. After
-      // MAX_VERIFY_ATTEMPTS on the same (pr, sha): park as verify-failed + flag a human.
-      const attempts = bumpVerifyFail(config.repo, pr.number, pr.headRefOid);
-      if (attempts >= MAX_VERIFY_ATTEMPTS && !opts.dryRun) {
-        markReviewed(config.repo, pr.number, `${pr.headRefOid}:verify-failed`);
-        if (config.labels.enabled) addLabels(config, pr.number, [config.labels.needsHuman]);
-        await threadedPost(
-          config,
-          pr.number,
-          `:warning: PR #${pr.number}: verifica fallita ${attempts} volte sullo stesso SHA (${msg}) — parcheggiata, serve un occhio (un nuovo push la riattiva)`,
-          { mention: true, branch: pr.headRefName },
-        );
-        await setStateReaction(config, pr.number, 'needs_human');
-      }
+      // (Verify failures + circuit breaker are handled inside the pool.)
+      console.error(`✗ PR #${pr.number}: ${error instanceof Error ? error.message : String(error)} — continuo con le altre`);
     }
+  }
+
+  // Concurrent verify pool: the LLM review is the slow stage (minutes per PR); run up to
+  // MAX_CONCURRENT_VERIFY at once instead of serializing the whole queue. Safe because the
+  // review command is read-only on the shared checkout (gh api + git fetch/show) and each
+  // session writes a PER-PR verdict file.
+  if (!opts.dryRun && toVerify.length > 0) {
+    console.log(`verify pool: ${toVerify.length} PR in coda, concorrenza ${Math.min(MAX_CONCURRENT_VERIFY, toVerify.length)}`);
+    const queue = [...toVerify];
+    const workers = Array.from({ length: Math.min(MAX_CONCURRENT_VERIFY, queue.length) }, async () => {
+      for (let pr = queue.shift(); pr !== undefined; pr = queue.shift()) {
+        try {
+          const verdict = await verifier.verify({
+            prNumber: pr.number,
+            repo: config.repo,
+            base: config.base,
+            contractRef: config.contract.appendix,
+            codeownersPath: config.criticalPaths,
+            repoPath: opts.repoPath,
+          });
+          await applyVerdict(config, pr.number, pr.headRefOid, pr.headRefName, verdict);
+          clearVerifyFail(config.repo, pr.number, pr.headRefOid);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          console.error(`✗ verify PR #${pr.number}: ${msg} — continuo con le altre`);
+          // Circuit breaker: transient failures may retry on later ticks, but a persistently
+          // broken verify (LLM/API down, bad checkout) must NOT re-run forever at tick
+          // frequency. After MAX_VERIFY_ATTEMPTS on the same (pr, sha): park + flag a human.
+          const attempts = bumpVerifyFail(config.repo, pr.number, pr.headRefOid);
+          if (attempts >= MAX_VERIFY_ATTEMPTS) {
+            markReviewed(config.repo, pr.number, `${pr.headRefOid}:verify-failed`);
+            if (config.labels.enabled) addLabels(config, pr.number, [config.labels.needsHuman]);
+            await threadedPost(
+              config,
+              pr.number,
+              `:warning: PR #${pr.number}: verifica fallita ${attempts} volte sullo stesso SHA (${msg}) — parcheggiata, serve un occhio (un nuovo push la riattiva)`,
+              { mention: true, branch: pr.headRefName },
+            );
+            await setStateReaction(config, pr.number, 'needs_human');
+          }
+        }
+      }
+    });
+    await Promise.all(workers);
   }
 
   if (!opts.dryRun) {
