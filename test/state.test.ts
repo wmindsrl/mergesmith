@@ -18,6 +18,8 @@ import {
   knownBranches,
   markReviewed,
   loadReviewed,
+  bumpVerifyFail,
+  clearVerifyFail,
 } from '../src/orchestrator/state.ts';
 
 // config.ts reads MERGESMITH_HOME dynamically, so pointing it at a temp dir isolates state per test.
@@ -123,5 +125,25 @@ test('threads: setThread preserves other state (issues, reviewed) in the same fi
     assert.deepEqual(getThread(repo, 5), { ts: 'ts-5', channel: 'C1' });
     assert.equal(issueForBranch(repo, 'cursor/fix-5')?.issueNumber, 5);
     assert.equal(loadReviewed(repo)['5'], 'sha-abc');
+  });
+});
+
+test('verifyFails: bump increments per (pr, sha), clear resets, scoped per sha', () => {
+  withHome(() => {
+    const repo = 'org/app';
+    // bump increments and returns the running count
+    assert.equal(bumpVerifyFail(repo, 7, 'aaa111'), 1);
+    assert.equal(bumpVerifyFail(repo, 7, 'aaa111'), 2);
+    assert.equal(bumpVerifyFail(repo, 7, 'aaa111'), 3);
+    // a different sha (new push) starts from scratch — the breaker re-arms
+    assert.equal(bumpVerifyFail(repo, 7, 'bbb222'), 1);
+    // a different pr is independent
+    assert.equal(bumpVerifyFail(repo, 8, 'aaa111'), 1);
+    // clear removes only the targeted (pr, sha)
+    clearVerifyFail(repo, 7, 'aaa111');
+    assert.equal(bumpVerifyFail(repo, 7, 'aaa111'), 1);
+    assert.equal(bumpVerifyFail(repo, 7, 'bbb222'), 2);
+    // clear on a missing key is a no-op (no throw)
+    clearVerifyFail(repo, 99, 'nope');
   });
 });

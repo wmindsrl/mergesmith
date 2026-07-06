@@ -53,6 +53,30 @@ export interface StateFile {
   threads?: Record<string, ThreadRef>;
   inbox?: InboxState;
   rework?: Record<string, ReworkRecord>;
+  /** Failed verify attempts per "pr:sha" — circuit breaker against re-running a broken verify forever. */
+  verifyFails?: Record<string, number>;
+}
+
+/** Bump the failed-verify counter for (pr, sha); returns the new count. */
+export function bumpVerifyFail(repo: string, pr: number, sha: string): number {
+  const state = loadState(repo);
+  state.verifyFails ??= {};
+  const key = `${pr}:${sha}`;
+  const next = (state.verifyFails[key] ?? 0) + 1;
+  state.verifyFails[key] = next;
+  saveState(repo, state);
+  return next;
+}
+
+/** Clear the failed-verify counter for (pr, sha) after a successful verify+apply. */
+export function clearVerifyFail(repo: string, pr: number, sha: string): void {
+  const state = loadState(repo);
+  if (!state.verifyFails) return;
+  const key = `${pr}:${sha}`;
+  if (key in state.verifyFails) {
+    delete state.verifyFails[key];
+    saveState(repo, state);
+  }
 }
 
 export function getInboxCursor(repo: string): string | undefined {

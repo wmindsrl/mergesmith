@@ -11,7 +11,9 @@ import { postSlack } from '../slack.js';
 import { adoptBranchThread, setStateReaction, threadedPost } from '../thread.js';
 import { FollowupError, type ImplementerProvider } from '../providers/types.js';
 import {
+  bumpVerifyFail,
   clearRework,
+  clearVerifyFail,
   getBranchThread,
   getRework,
   getThread,
@@ -35,6 +37,10 @@ export interface TickOptions {
   /** Local checkout dir of the target repo (multi-repo: passed to the verifier as cwd). */
   repoPath?: string;
 }
+
+// Circuit breaker: max failed verify attempts on the same (pr, sha) before parking it for a human.
+// A new push (new SHA) always re-arms the breaker.
+const MAX_VERIFY_ATTEMPTS = 3;
 
 export async function tickRepo(config: MergesmithConfig, opts: TickOptions = {}): Promise<void> {
   if (!opts.dryRun && existsSync(pausedFlagPath())) {
@@ -111,6 +117,9 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
     }
 
     if (reviewed[String(pr.number)] === pr.headRefOid) continue;
+    // Circuit breaker: this (pr, sha) already burned MAX_VERIFY_ATTEMPTS — parked for a human,
+    // don't re-run a broken verify forever (see catch below).
+    if (reviewed[String(pr.number)] === `${pr.headRefOid}:verify-failed`) continue;
 
     try {
       if (config.labels.enabled && !pr.labels.includes(config.labels.managed) && !opts.dryRun) {
@@ -140,6 +149,7 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
           repoPath: opts.repoPath,
         });
         await applyVerdict(config, pr.number, pr.headRefOid, pr.headRefName, verdict);
+        clearVerifyFail(config.repo, pr.number, pr.headRefOid);
       } else if (ci === 'red') {
         if (reviewed[String(pr.number)] === `${pr.headRefOid}:ci-red`) continue;
         await handleCiRed(config, impl, pr.number, pr.headRefName, pr.headRefOid);
@@ -147,7 +157,23 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
       // pending / error → skip, retry next tick
     } catch (error) {
       // One PR's failure (network hiccup, gh error) must never abort the whole batch.
-      console.error(`✗ PR #${pr.number}: ${error instanceof Error ? error.message : String(error)} — continuo con le altre`);
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error(`✗ PR #${pr.number}: ${msg} — continuo con le altre`);
+      // Circuit breaker: transient failures may retry on later ticks, but a persistently broken
+      // verify (LLM/API down, bad checkout) must NOT re-run forever at tick frequency. After
+      // MAX_VERIFY_ATTEMPTS on the same (pr, sha): park as verify-failed + flag a human.
+      const attempts = bumpVerifyFail(config.repo, pr.number, pr.headRefOid);
+      if (attempts >= MAX_VERIFY_ATTEMPTS && !opts.dryRun) {
+        markReviewed(config.repo, pr.number, `${pr.headRefOid}:verify-failed`);
+        if (config.labels.enabled) addLabels(config, pr.number, [config.labels.needsHuman]);
+        await threadedPost(
+          config,
+          pr.number,
+          `:warning: PR #${pr.number}: verifica fallita ${attempts} volte sullo stesso SHA (${msg}) — parcheggiata, serve un occhio (un nuovo push la riattiva)`,
+          { mention: true, branch: pr.headRefName },
+        );
+        await setStateReaction(config, pr.number, 'needs_human');
+      }
     }
   }
 
