@@ -8,7 +8,7 @@ import { readJson, writeJson } from '../lib.js';
 import { addLabels, branchHead, ciState, listOpenPRs, prStatesForBranch } from '../github.js';
 import { getImplementer, getVerifier } from '../providers/registry.js';
 import { postSlack } from '../slack.js';
-import { setStateReaction, threadedPost } from '../thread.js';
+import { adoptBranchThread, setStateReaction, threadedPost } from '../thread.js';
 import { FollowupError, type ImplementerProvider } from '../providers/types.js';
 import {
   clearRework,
@@ -261,6 +261,7 @@ async function handleReworkStall(
   branch: string,
   rework: ReworkRecord,
 ): Promise<void> {
+  adoptBranchThread(config, pr, branch);
   const elapsed = Date.now() - rework.followupAt;
   if (elapsed < REWORK_GRACE_MS) return; // give the follow-up run time to start + work
 
@@ -304,6 +305,7 @@ async function handleCiRed(
   branch: string,
   sha: string,
 ): Promise<void> {
+  adoptBranchThread(config, pr, branch);
   if (config.labels.enabled) addLabels(config, pr, [config.labels.ciRed]);
   const ref = refForBranch(config.repo, branch);
   if (!ref) {

@@ -2,7 +2,7 @@
 // Every verifier funnels through here, so merge/gate policy lives in exactly one place.
 import type { MergesmithConfig } from '../config.js';
 import { addLabels, approve, comment, mergeAuto, prMergeable, removeLabels, requestChanges } from '../github.js';
-import { setStateReaction, threadedPost } from '../thread.js';
+import { adoptBranchThread, setStateReaction, threadedPost } from '../thread.js';
 import { getImplementer } from '../providers/registry.js';
 import { FollowupError, type Verdict } from '../providers/types.js';
 import { issueForBranch, markIssueDone, markReviewed, refForBranch, setRefForBranch, setRework } from './state.js';
@@ -37,6 +37,9 @@ export async function applyVerdict(
   branch: string,
   verdict: Verdict,
 ): Promise<void> {
+  // Anchor this PR's Slack thread to its ":rocket: Dispatch" message (if stashed by the
+  // dispatcher) before any threadedPost/reaction below — the whole lifecycle threads under it.
+  adoptBranchThread(config, pr, branch);
   const L = config.labels;
   const setLabels = (add: string[], remove: string[]): void => {
     if (!L.enabled) return;

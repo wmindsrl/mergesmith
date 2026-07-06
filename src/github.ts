@@ -151,7 +151,20 @@ export function requestChanges(config: MergesmithConfig, pr: number, body: strin
 }
 
 export function mergeAuto(config: MergesmithConfig, pr: number): void {
-  run(config, ['pr', 'merge', String(pr), '--repo', config.repo, '--auto', '--squash']);
+  try {
+    run(config, ['pr', 'merge', String(pr), '--repo', config.repo, '--auto', '--squash']);
+  } catch (error) {
+    // `--auto` (GitHub auto-merge queue) only works when the BASE branch has protection rules.
+    // Integration bases (e.g. a long-lived feat/* scaffold) usually have none → GraphQL error
+    // "Protected branch rules not configured for this branch (enablePullRequestAutoMerge)".
+    // At this point the verdict is APPROVE and CI is green, so merge directly instead.
+    const msg = error instanceof Error ? error.message : String(error);
+    const unprotectedBase =
+      msg.includes('enablePullRequestAutoMerge') ||
+      msg.includes('Protected branch rules not configured');
+    if (!unprotectedBase) throw error;
+    run(config, ['pr', 'merge', String(pr), '--repo', config.repo, '--squash']);
+  }
 }
 
 // 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN' — used to tell an agent-recoverable conflict (→ rebase)
