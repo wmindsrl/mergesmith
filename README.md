@@ -48,6 +48,11 @@ one step forward each time it fires.
   `branchPrefix` (e.g. `cursor/*`).
 - **tick** is idempotent and safe to run on a cron. It only touches PRs Mergesmith owns (matching
   branch prefix or tracked state), advances each one, and posts CI/state changes to Slack.
+- **watch** (recommended) is the tick without the wait: a long-lived process that re-scans every
+  ~40s, so each PR advances the moment its gate opens instead of at the next cron boundary — a
+  full rework round saves 5-15 minutes of pure alignment latency. The same cron line keeps
+  working as a watchdog: it exits immediately while a watch is alive (per-repo lock) and
+  restarts it when it exits (`--max-runtime`, default 55 min).
 - **verifier** runs the adversarial review in a fresh headless session and writes a structured
   `Verdict`. On `APPROVE` with green CI and no critical paths touched, Mergesmith squash-merges. On
   `REQUEST_CHANGES`, it files a follow-up so the implementer reworks the same branch.
@@ -145,6 +150,7 @@ npx mergesmith tick --all
 | `mergesmith init` | Scaffold config, CODEOWNERS, CI workflow, contract appendix and branch ruleset into the current repo; create the state labels. |
 | `mergesmith dispatch <spec>` | Send a Composer-ready spec to the implementer, which opens a PR. |
 | `mergesmith tick [--all] [--dry-run]` | Advance agent-managed PRs one step. `--all` processes every repo registered in `~/.mergesmith/repos.json`; `--dry-run` prints the actions it would take without mutating anything. Designed to run on a cron. |
+| `mergesmith watch [--all] [--interval <s>] [--max-runtime <m>]` | **Pipeline mode**: a long-lived process that re-scans every `--interval` seconds (default 40) and advances each PR **as soon as its gate opens** — no waiting for the next cron tick, and a slow verify never blocks another PR's merge (persistent verify pool, one process owns the state). Exits cleanly after `--max-runtime` minutes (default 55): keep the cron entry as the **watchdog** that restarts it inside its schedule window. |
 | `mergesmith followup --branch <b> --message "<m>"` | Manually queue a rework instruction to the implementer on branch `<b>` (the same mechanism `REQUEST_CHANGES` uses automatically). |
 | `mergesmith notify "<text>" [--mention]` | Post a message to the configured Slack channel via `chat.postMessage`. `--mention` pings the human owner (`mentionUserIdEnv`) for actions that need a person. |
 | `mergesmith inbox` | Poll Slack for `!go`-finalized threads and turn each into a `ready` GitHub issue (the tick runs this every cycle; the command is for manual/testing runs). See [Slack inbox](#slack-inbox). |

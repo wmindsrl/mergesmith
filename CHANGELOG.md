@@ -5,6 +5,11 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-07-10
+
+### Added
+- **`mergesmith watch` — pipeline mode.** Un processo long-lived che ri-scansiona ogni ~40s (`--interval`) e fa avanzare **ogni PR appena il suo gate si apre**: CI verde → verify subito, verdetto → follow-up subito — niente riallineamento al prossimo tick del cron (5-15 min risparmiati per round). Le verify girano in un **pool persistente** (concorrenza 3, dedup per PR): una verify lenta non blocca più il merge di un'altra PR e un solo processo possiede lo stato (niente race inter-processo, niente tick saltati dal flock). Il cron esistente diventa il **watchdog**: mentre un watch è vivo esce subito (lock per-repo, con refresh anti-steal), quando il watch termina (`--max-runtime`, default 55 min, drain pulito delle verify in corso) lo rilancia — la finestra oraria del crontab continua a delimitare quando il loop gira. L'intake Slack e gli sweep anti-stallo girano throttlati (1 scan su 4). `tick` resta per run one-shot e `--dry-run`.
+
 ## [0.6.0] — 2026-07-10
 
 ### Added

@@ -1,11 +1,22 @@
 // Per-repo advisory lock (CLI-level): two `mergesmith tick`/verify runs on the same repo must
 // not race on mergesmith-verdict.json or the state JSON. The cron wrapper's flock only covers
 // the cron; this covers manual runs too. Stale locks (>45 min) are stolen.
-import { closeSync, mkdirSync, openSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, statSync, unlinkSync, utimesSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { stateDir } from './config.js';
 
 const STALE_MS = 45 * 60 * 1000;
+
+/** Touch the lock so a long-lived holder (the watch daemon) isn't stolen as stale at 45 min.
+ * Call it periodically while holding the lock. Best-effort. */
+export function refreshRepoLock(repo: string): void {
+  try {
+    const now = new Date();
+    utimesSync(join(stateDir(repo), 'tick.lock'), now, now);
+  } catch {
+    /* ignore */
+  }
+}
 
 // Returns a release() to call when done, or null if another live process holds the lock.
 export function acquireRepoLock(repo: string): (() => void) | null {

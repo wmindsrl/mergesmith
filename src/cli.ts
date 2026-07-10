@@ -6,6 +6,7 @@ import { readJson } from './lib.js';
 import { dispatchSpec } from './orchestrator/dispatch.js';
 import { dispatchIssue } from './orchestrator/issue.js';
 import { tickAll, tickRepo } from './orchestrator/tick.js';
+import { watchAll, watchRepo } from './orchestrator/watch.js';
 import { markReviewed, refForBranch, setRefForBranch } from './orchestrator/state.js';
 import { getImplementer, getVerifier } from './providers/registry.js';
 import { ensureLabel } from './github.js';
@@ -26,6 +27,10 @@ Usage:
   mergesmith init                             Scaffold config + CODEOWNERS + labels + ruleset in this repo
   mergesmith dispatch <spec-path>|--issue <n> Send a spec or a GitHub issue to the implementer
   mergesmith tick [--all] [--dry-run]         Poll agent-managed PRs (verify green / follow-up red)
+  mergesmith watch [--all] [--interval <s>] [--max-runtime <m>]
+                                              Pipeline mode: scan continuo, ogni PR avanza appena il suo
+                                              gate si apre (niente attesa del prossimo tick). Il cron
+                                              diventa watchdog: rilancia il watch quando esce.
   mergesmith followup --branch <b> --message "<m>"   Send a manual follow-up to the agent
   mergesmith notify "<text>" [--mention]      Post to the configured Slack channel
   mergesmith inbox                            Poll Slack for !go-finalized threads → GitHub issues
@@ -76,6 +81,33 @@ async function main(): Promise<void> {
           } catch {
             /* alert best-effort: non nascondere l'errore originale */
           }
+        }
+        throw error;
+      }
+      break;
+    }
+
+    case 'watch': {
+      const intervalArg = argValue(rest, '--interval');
+      const maxRuntimeArg = argValue(rest, '--max-runtime');
+      const opts = {
+        ...(intervalArg ? { intervalMs: Number(intervalArg) * 1000 } : {}),
+        ...(maxRuntimeArg ? { maxRuntimeMs: Number(maxRuntimeArg) * 60_000 } : {}),
+      };
+      try {
+        if (rest.includes('--all')) await watchAll(opts);
+        else await watchRepo(loadConfig(), opts);
+      } catch (error) {
+        // Systemic failure: alert Slack, then rethrow (the cron watchdog will restart us).
+        try {
+          const cfg = loadConfig();
+          await postSlack(
+            cfg.slack,
+            `:rotating_light: mergesmith watch FALLITO su ${cfg.repo}: ${error instanceof Error ? error.message : String(error)}`,
+            { mention: true },
+          );
+        } catch {
+          /* alert best-effort: non nascondere l'errore originale */
         }
         throw error;
       }

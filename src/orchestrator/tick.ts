@@ -9,7 +9,7 @@ import { addLabels, authorHasWriteAccess, botLogin, branchHead, ciState, comment
 import { getImplementer, getVerifier } from '../providers/registry.js';
 import { postSlack } from '../slack.js';
 import { adoptBranchThread, setStateReaction, threadedPost } from '../thread.js';
-import { FollowupError, type ImplementerProvider } from '../providers/types.js';
+import { FollowupError, type ImplementerProvider, type VerifierProvider } from '../providers/types.js';
 import {
   bumpVerifyFail,
   clearDecision,
@@ -44,13 +44,18 @@ export interface TickOptions {
   repoPath?: string;
 }
 
+export interface ScanOptions extends TickOptions {
+  /** Skip Slack-inbox + ready-issue intake this pass (the watch loop throttles intake). */
+  skipIntake?: boolean;
+}
+
 // Circuit breaker: max failed verify attempts on the same (pr, sha) before parking it for a human.
 // A new push (new SHA) always re-arms the breaker.
 const MAX_VERIFY_ATTEMPTS = 3;
 
-// Concurrent LLM verifies per tick. Reviews are read-only on the shared checkout and write
-// per-PR verdict files, so they parallelize safely; 3 keeps memory/API pressure sane.
-const MAX_CONCURRENT_VERIFY = 3;
+// Concurrent LLM verifies. Reviews are read-only on the shared checkout and write per-PR
+// verdict files, so they parallelize safely; 3 keeps memory/API pressure sane.
+export const MAX_CONCURRENT_VERIFY = 3;
 
 export async function tickRepo(config: MergesmithConfig, opts: TickOptions = {}): Promise<void> {
   if (!opts.dryRun && existsSync(pausedFlagPath())) {
@@ -74,33 +79,35 @@ export async function tickRepo(config: MergesmithConfig, opts: TickOptions = {})
   }
 }
 
-async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promise<void> {
+/**
+ * One pass over the repo: intake + per-PR gates (decision, rework watchdog, CI). Green,
+ * not-yet-reviewed PRs are handed to `enqueueVerify` — the CALLER owns how verifies run
+ * (tick: bounded batch awaited in-cycle; watch: persistent pool that survives across scans).
+ */
+export async function scanRepo(
+  config: MergesmithConfig,
+  opts: ScanOptions,
+  enqueueVerify: (pr: OpenPR) => void,
+): Promise<void> {
   const impl = getImplementer(config);
-  const verifier = getVerifier(config);
   const branches = new Set(knownBranches(config.repo));
   const reviewed = loadReviewed(config.repo);
 
   // Slack inbox: !go-finalized threads → new `ready` issues (before runReadyIssues, so a freshly
-  // created issue is dispatched in this same tick).
-  if (!opts.dryRun) {
+  // created issue is dispatched in this same pass).
+  if (!opts.dryRun && !opts.skipIntake) {
     try {
       await pollInbox(config);
     } catch (error) {
       console.error(`✗ inbox: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }
-
-  // Mode B: dispatch any `ready` issues → they open cursor/* PRs handled by the loop below.
-  if (!opts.dryRun) {
+    // Mode B: dispatch any `ready` issues → they open cursor/* PRs handled by the loop below.
     try {
       await runReadyIssues(config);
     } catch (error) {
       console.error(`✗ ready-issues: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-
-  // PRs whose CI is green and SHA not yet reviewed — verified concurrently after the scan.
-  const toVerify: OpenPR[] = [];
 
   for (const pr of listOpenPRs(config)) {
     if (pr.isDraft) continue;
@@ -186,9 +193,9 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
       }
 
       if (ci === 'green') {
-        // Queue for the concurrent verify pool below — verifies are the slow LLM stage and
+        // Hand off to the caller's verify pool — verifies are the slow LLM stage and
         // must not serialize the whole queue (one PR at a time was the old bottleneck).
-        toVerify.push(pr);
+        enqueueVerify(pr);
       } else if (ci === 'red') {
         if (reviewed[String(pr.number)] === `${pr.headRefOid}:ci-red`) continue;
         await handleCiRed(config, impl, pr.number, pr.headRefName, pr.headRefOid);
@@ -200,6 +207,66 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
       console.error(`✗ PR #${pr.number}: ${error instanceof Error ? error.message : String(error)} — continuo con le altre`);
     }
   }
+}
+
+/** Verify one PR and apply its verdict. Never throws: failures feed the circuit breaker
+ * (MAX_VERIFY_ATTEMPTS on the same sha → park + flag a human). Shared by tick and watch. */
+export async function verifyAndApply(
+  config: MergesmithConfig,
+  opts: TickOptions,
+  verifier: VerifierProvider,
+  pr: OpenPR,
+): Promise<void> {
+  try {
+    // Previous verdict (if any) → RE-REVIEW: scoped to previous blockers + delta, on the
+    // faster reworkModel; the owner's settled decisions ride along as binding.
+    const rereview = getLastVerdict(config.repo, pr.number) ?? undefined;
+    const verdict = await verifier.verify({
+      prNumber: pr.number,
+      repo: config.repo,
+      base: config.base,
+      contractRef: config.contract.appendix,
+      codeownersPath: config.criticalPaths,
+      repoPath: opts.repoPath,
+      rereview,
+    });
+    await applyVerdict(config, pr.number, pr.headRefOid, pr.headRefName, verdict);
+    clearVerifyFail(config.repo, pr.number, pr.headRefOid);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`✗ verify PR #${pr.number}: ${msg} — continuo con le altre`);
+    // Circuit breaker: transient failures may retry on later passes, but a persistently
+    // broken verify (LLM/API down, bad checkout) must NOT re-run forever. After
+    // MAX_VERIFY_ATTEMPTS on the same (pr, sha): park + flag a human.
+    const attempts = bumpVerifyFail(config.repo, pr.number, pr.headRefOid);
+    if (attempts >= MAX_VERIFY_ATTEMPTS) {
+      markReviewed(config.repo, pr.number, `${pr.headRefOid}:verify-failed`);
+      if (config.labels.enabled) addLabels(config, pr.number, [config.labels.needsHuman]);
+      await threadedPost(
+        config,
+        pr.number,
+        `:warning: PR #${pr.number}: verifica fallita ${attempts} volte sullo stesso SHA (${msg}) — parcheggiata, serve un occhio (un nuovo push la riattiva)`,
+        { mention: true, branch: pr.headRefName },
+      );
+      await setStateReaction(config, pr.number, 'needs_human');
+    }
+  }
+}
+
+/** Stall sweeps + heartbeat (shared by tick and watch — the watch throttles the sweeps). */
+export async function sweepAndHeartbeat(config: MergesmithConfig, sweep: boolean): Promise<void> {
+  if (sweep) {
+    const impl = getImplementer(config);
+    await sweepDispatchStalls(config, impl);
+    await reportStuckRuns(config, impl);
+  }
+  writeJson(heartbeatPath(config.repo), { lastTick: new Date().toISOString() });
+}
+
+async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promise<void> {
+  // PRs whose CI is green and SHA not yet reviewed — verified concurrently after the scan.
+  const toVerify: OpenPR[] = [];
+  await scanRepo(config, opts, (pr) => toVerify.push(pr));
 
   // Concurrent verify pool: the LLM review is the slow stage (minutes per PR); run up to
   // MAX_CONCURRENT_VERIFY at once instead of serializing the whole queue. Safe because the
@@ -207,52 +274,18 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
   // session writes a PER-PR verdict file.
   if (!opts.dryRun && toVerify.length > 0) {
     console.log(`verify pool: ${toVerify.length} PR in coda, concorrenza ${Math.min(MAX_CONCURRENT_VERIFY, toVerify.length)}`);
+    const verifier = getVerifier(config);
     const queue = [...toVerify];
     const workers = Array.from({ length: Math.min(MAX_CONCURRENT_VERIFY, queue.length) }, async () => {
       for (let pr = queue.shift(); pr !== undefined; pr = queue.shift()) {
-        try {
-          // Previous verdict (if any) → RE-REVIEW: scoped to previous blockers + delta, on the
-          // faster reworkModel; the owner's decision answer (if any) rides along as binding.
-          const rereview = getLastVerdict(config.repo, pr.number) ?? undefined;
-          const verdict = await verifier.verify({
-            prNumber: pr.number,
-            repo: config.repo,
-            base: config.base,
-            contractRef: config.contract.appendix,
-            codeownersPath: config.criticalPaths,
-            repoPath: opts.repoPath,
-            rereview,
-          });
-          await applyVerdict(config, pr.number, pr.headRefOid, pr.headRefName, verdict);
-          clearVerifyFail(config.repo, pr.number, pr.headRefOid);
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          console.error(`✗ verify PR #${pr.number}: ${msg} — continuo con le altre`);
-          // Circuit breaker: transient failures may retry on later ticks, but a persistently
-          // broken verify (LLM/API down, bad checkout) must NOT re-run forever at tick
-          // frequency. After MAX_VERIFY_ATTEMPTS on the same (pr, sha): park + flag a human.
-          const attempts = bumpVerifyFail(config.repo, pr.number, pr.headRefOid);
-          if (attempts >= MAX_VERIFY_ATTEMPTS) {
-            markReviewed(config.repo, pr.number, `${pr.headRefOid}:verify-failed`);
-            if (config.labels.enabled) addLabels(config, pr.number, [config.labels.needsHuman]);
-            await threadedPost(
-              config,
-              pr.number,
-              `:warning: PR #${pr.number}: verifica fallita ${attempts} volte sullo stesso SHA (${msg}) — parcheggiata, serve un occhio (un nuovo push la riattiva)`,
-              { mention: true, branch: pr.headRefName },
-            );
-            await setStateReaction(config, pr.number, 'needs_human');
-          }
-        }
+        await verifyAndApply(config, opts, verifier, pr);
       }
     });
     await Promise.all(workers);
   }
 
   if (!opts.dryRun) {
-    await sweepDispatchStalls(config, impl);
-    await reportStuckRuns(config, impl);
-    writeJson(heartbeatPath(config.repo), { lastTick: new Date().toISOString() });
+    await sweepAndHeartbeat(config, true);
   }
 }
 
