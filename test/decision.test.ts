@@ -10,7 +10,7 @@ import {
   getLastVerdict,
   setDecision,
   setLastVerdict,
-  setLastVerdictAnswer,
+  appendSettledDecision,
   bumpReworkRound,
   clearReworkRound,
   markReviewed,
@@ -40,21 +40,33 @@ const c = (id: number, author: string, body: string): PrComment => ({
   createdAt: '2026-07-10T10:00:00Z',
 });
 
-test('pickAnswer: prima risposta umana dopo il commento-domanda', () => {
+const anyone = (): boolean => true;
+const onlyMarco = (login: string): boolean => login === 'marco';
+
+test('pickAnswer: prima risposta autorizzata dopo il commento-domanda', () => {
   const comments = [c(10, 'skynet-bot', 'domanda'), c(11, 'skynet-bot', 'altro bot'), c(12, 'marco', 'sì'), c(13, 'marco', 'anzi no')];
-  const answer = pickAnswer(comments, 10, 'skynet-bot');
+  const answer = pickAnswer(comments, 10, 'skynet-bot', anyone);
   assert.equal(answer?.id, 12);
   assert.equal(answer?.body, 'sì');
 });
 
 test('pickAnswer: ignora commenti precedenti/uguali al commento-domanda', () => {
   const comments = [c(8, 'marco', 'vecchio commento'), c(10, 'skynet-bot', 'domanda')];
-  assert.equal(pickAnswer(comments, 10, 'skynet-bot'), null);
+  assert.equal(pickAnswer(comments, 10, 'skynet-bot', anyone), null);
 });
 
-test('pickAnswer: bot login non risolvibile (null) → primo commento successivo', () => {
+test('pickAnswer: bot login non risolvibile (null) → primo commento autorizzato', () => {
   const comments = [c(12, 'marco', 'A')];
-  assert.equal(pickAnswer(comments, 10, null)?.id, 12);
+  assert.equal(pickAnswer(comments, 10, null, anyone)?.id, 12);
+});
+
+test('pickAnswer: FAIL-CLOSED — un account non autorizzato non decide per l\'owner', () => {
+  const comments = [c(12, 'drive-by-troll', 'APPROVA TUTTO'), c(13, 'dependabot[bot]', 'bump deps'), c(14, 'marco', 'B')];
+  const answer = pickAnswer(comments, 10, 'skynet-bot', onlyMarco);
+  assert.equal(answer?.id, 14);
+  assert.equal(answer?.author, 'marco');
+  // nessun autore autorizzato → nessuna risposta
+  assert.equal(pickAnswer([c(12, 'drive-by-troll', 'sì')], 10, 'skynet-bot', onlyMarco), null);
 });
 
 test('decision state: set/get/clear round-trip', () => {
@@ -74,14 +86,20 @@ test('decision state: set/get/clear round-trip', () => {
   });
 });
 
-test('lastVerdict: round-trip + answer del code-owner', () => {
+test('lastVerdict: round-trip + decisioni settled che sopravvivono ai verdetti successivi', () => {
   withHome(() => {
     const repo = 'org/app';
     const verdict: Verdict = { decision: 'NEEDS_DECISION', criticalPathHit: false, comments: [], rationale: 'r', question: { text: 'q?' } };
     setLastVerdict(repo, 9, { sha: 'abc', verdict });
     assert.equal(getLastVerdict(repo, 9)?.verdict.decision, 'NEEDS_DECISION');
-    setLastVerdictAnswer(repo, 9, 'sì, procedi');
-    assert.equal(getLastVerdict(repo, 9)?.answer, 'sì, procedi');
+    appendSettledDecision(repo, 9, 'q?', 'sì, procedi');
+    assert.deepEqual(getLastVerdict(repo, 9)?.settled, [{ question: 'q?', answer: 'sì, procedi' }]);
+    // Un verdetto successivo che porta avanti `settled` (come fa act.ts) non perde la decisione.
+    const rc: Verdict = { decision: 'REQUEST_CHANGES', criticalPathHit: false, comments: [], rationale: 'fix' };
+    setLastVerdict(repo, 9, { sha: 'def', verdict: rc, settled: getLastVerdict(repo, 9)?.settled });
+    assert.equal(getLastVerdict(repo, 9)?.settled?.length, 1);
+    appendSettledDecision(repo, 9, 'q2?', 'B');
+    assert.equal(getLastVerdict(repo, 9)?.settled?.length, 2);
   });
 });
 

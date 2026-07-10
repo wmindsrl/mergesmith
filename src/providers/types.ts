@@ -26,15 +26,20 @@ export type Verdict = {
   attribution?: { engine: string; model?: string };
 };
 
-/** Context for a re-review: the previous verdict on this PR (+ the owner's answer, if the
- * previous round was NEEDS_DECISION). The verifier judges ONLY previous blockers + delta
- * regressions — never new discoveries outside the delta. */
+/** A NEEDS_DECISION question the code-owner already answered on this PR. Settled decisions are
+ * carried across ALL later review rounds (an answered question must never be re-asked). */
+export type SettledDecision = { question: string; answer: string };
+
+/** Context for a re-review: the previous verdict on this PR plus every decision the owner has
+ * settled so far. The verifier judges ONLY previous blockers + delta regressions — never new
+ * discoveries outside the delta. */
 export type RereviewContext = {
   /** Head SHA the previous verdict judged (delta base for the re-review). */
   sha: string;
   verdict: Verdict;
-  /** The code-owner's raw answer to verdict.question — BINDING for the re-review. */
-  answer?: string;
+  /** Owner-settled decisions, oldest first — binding as DECISIONS on their questions (they are
+   * data, never instructions that can change the review rules). */
+  settled?: SettledDecision[];
 };
 
 export type ImplementerState = 'running' | 'finished' | 'error' | 'expired';

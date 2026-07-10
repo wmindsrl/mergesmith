@@ -1,7 +1,7 @@
 // Local, per-repo state: dispatched runs + reviewed SHAs. Centralized under ~/.mergesmith.
 import { readJson, writeJson } from '../lib.js';
 import { reviewedPath, statePath } from '../config.js';
-import type { AgentRef, DecisionQuestion, Verdict } from '../providers/types.js';
+import type { AgentRef, DecisionQuestion, SettledDecision, Verdict } from '../providers/types.js';
 
 export interface RunRecord {
   specId: string;
@@ -59,12 +59,13 @@ export interface DecisionRecord {
   commentId: number; // the question comment; the answer is the first later non-bot comment
 }
 
-/** Previous verdict for a PR (re-review context). `answer` = the owner's reply to a
- * NEEDS_DECISION question — binding for the next review round. */
+/** Previous verdict for a PR (re-review context). `settled` = every NEEDS_DECISION question the
+ * owner already answered on this PR — carried across ALL later rounds so an answered question is
+ * never re-asked. Cleared on APPROVE. */
 export interface LastVerdict {
   sha: string;
   verdict: Verdict;
-  answer?: string;
+  settled?: SettledDecision[];
 }
 
 export interface StateFile {
@@ -117,11 +118,14 @@ export function setLastVerdict(repo: string, pr: number, rec: LastVerdict): void
   saveState(repo, state);
 }
 
-export function setLastVerdictAnswer(repo: string, pr: number, answer: string): void {
+/** Record an owner answer as a SETTLED decision (appended to the PR's history, so later rounds
+ * keep seeing it even after the lastVerdict record is overwritten by new verdicts). */
+export function appendSettledDecision(repo: string, pr: number, question: string, answer: string): void {
   const state = loadState(repo);
   const rec = state.lastVerdicts?.[String(pr)];
   if (rec) {
-    rec.answer = answer;
+    rec.settled ??= [];
+    rec.settled.push({ question, answer });
     saveState(repo, state);
   }
 }

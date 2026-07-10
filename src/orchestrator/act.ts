@@ -9,6 +9,7 @@ import {
   bumpReworkRound,
   clearLastVerdict,
   clearReworkRound,
+  getLastVerdict,
   issueForBranch,
   markIssueDone,
   markReviewed,
@@ -42,6 +43,8 @@ function attributionSuffix(verdict: Verdict): string {
   return a.model ? ` (${a.engine}/${a.model})` : ` (${a.engine})`;
 }
 
+// Review layout (leggibile a colpo d'occhio): recap in testa, punti importanti come bullet,
+// "Da fare" in fondo. La sintesi vera è imposta al verifier dal comando (rationale 2-4 frasi).
 function verdictBody(verdict: Verdict): string {
   const lines = [verdict.rationale];
   if (verdict.comments.length > 0) {
@@ -49,6 +52,9 @@ function verdictBody(verdict: Verdict): string {
     for (const c of verdict.comments) {
       lines.push(`- \`${c.path}${c.line ? `:${c.line}` : ''}\` — ${c.body}`);
     }
+  }
+  if (verdict.decision === 'REQUEST_CHANGES' && verdict.followupMessage) {
+    lines.push('', '**Da fare:**', verdict.followupMessage);
   }
   if (verdict.attribution) lines.push('', `— verified by${attributionSuffix(verdict)}`);
   return lines.join('\n');
@@ -75,7 +81,8 @@ export async function applyVerdict(
     requestChanges(config, pr, verdictBody(verdict));
     setLabels([L.rework], [L.approved, L.needsHuman]);
     // Re-review context for the next round: the verifier judges ONLY these blockers + the delta.
-    setLastVerdict(config.repo, pr, { sha, verdict });
+    // Settled owner decisions are carried forward — an answered question must never be re-asked.
+    setLastVerdict(config.repo, pr, { sha, verdict, settled: getLastVerdict(config.repo, pr)?.settled });
     // Trickle alarm: from round 3 the review ping-pong is costing hours — ping the owner, who can
     // often unblock with one decision.
     const rounds = bumpReworkRound(config.repo, pr);
@@ -149,15 +156,17 @@ export async function applyVerdict(
         : '_Rispondi con un commento qui sotto: `sì` / `no` o testo libero. Il loop riprende da solo._',
       ...(verdict.attribution ? ['', `— asked by${attributionSuffix(verdict)}`] : []),
     ].join('\n');
-    const commentId = commentWithId(config, pr, body);
-    setLastVerdict(config.repo, pr, { sha, verdict });
-    setDecision(config.repo, pr, { sha, question: q, askedAt: new Date().toISOString(), commentId });
+    const posted = commentWithId(config, pr, body);
+    setLastVerdict(config.repo, pr, { sha, verdict, settled: getLastVerdict(config.repo, pr)?.settled });
+    // askedAt = the SERVER's created_at: immune to local clock skew (a local clock ahead of
+    // GitHub would make `since` filter the owner's answer out forever).
+    setDecision(config.repo, pr, { sha, question: q, askedAt: posted.createdAt, commentId: posted.id });
     markReviewed(config.repo, pr, sha); // never re-verify this SHA while the question is pending
     setLabels([], [L.rework]); // NOT needsHuman: that label makes the tick skip the PR entirely
     await threadedPost(
       config,
       pr,
-      `:question: PR #${pr} — decisione richiesta: ${firstLine(q.text)}\nhttps://github.com/${config.repo}/pull/${pr}#issuecomment-${commentId}${attributionSuffix(verdict)}`,
+      `:question: PR #${pr} — decisione richiesta: ${firstLine(q.text)}\nhttps://github.com/${config.repo}/pull/${pr}#issuecomment-${posted.id}${attributionSuffix(verdict)}`,
       { mention: true },
     );
     await setStateReaction(config, pr, 'decision');

@@ -33,7 +33,7 @@ export function writeRereviewContext(cwd: string, prNumber: number, ctx: Rerevie
         comments: ctx.verdict.comments,
         ...(ctx.verdict.followupMessage ? { followupMessage: ctx.verdict.followupMessage } : {}),
         ...(ctx.verdict.question ? { question: ctx.verdict.question } : {}),
-        ...(ctx.answer ? { ownerAnswer: ctx.answer } : {}),
+        ...(ctx.settled?.length ? { settledDecisions: ctx.settled } : {}),
       },
       null,
       2,

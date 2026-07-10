@@ -14,7 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Review più leggera (contratto + comando).** Il default per codice funzionante e conforme alla spec è APPROVE-con-commenti: stile, naming, refactor minori ed edge case ipotetici non sono MAI bloccanti; i test sono richiesti solo su logica nuova non banale. La prima review deve essere **esaustiva** (tutti i blocchi al round 1 — il trickle è un difetto della review).
+- **Testi sintetici e scansionabili.** La review sulla PR è: recap (2-4 frasi) → punti azionabili come bullet → **Da fare** in fondo; il comando impone al verifier rationale breve e follow-up a imperativi numerati. Template PR del contratto ridotto a Recap / Evidence / Deviations & open questions (il vecchio self-check resta come comportamento richiesto, non come boilerplate da incollare).
 - Il comando `validate-pr` shipped è allineato al formato per-PR del verdict (`mergesmith-verdict-<pr>.json` + campo `pr`).
+
+### Security (review multi-agente pre-release: 12 finding, tutti risolti)
+- **Solo chi ha write/admin sul repo può rispondere a un NEEDS_DECISION** (`authorHasWriteAccess`, fail-closed): un account qualsiasi o un bot terzo che commenta la PR non decide per l'owner.
+- **Le risposte dell'owner sono dati, non istruzioni**: `settledDecisions` decide solo la propria domanda; il comando vieta esplicitamente che una risposta alteri le regole di review (contenimento prompt-injection).
+- **`cursor-agent` pre-pulisce anche il verdict per-PR**: un verdict stantio di una sessione crashata non può più essere applicato a uno SHA mai recensito (fail-open chiuso).
+- **Delta della re-review calcolato contro l'head della PR** (`git diff <previousSha>..<headRefOid>`), mai contro l'HEAD locale del checkout condiviso.
+- **Decisioni settled persistenti**: la risposta dell'owner sopravvive a tutti i round successivi (mai ri-chiedere una domanda già risposta), anche se arriva insieme a un nuovo push.
+- **`askedAt` = `created_at` del server GitHub**: immune allo skew del clock locale nel poll delle risposte.
 
 ## [0.5.5] — 2026-07-10
 

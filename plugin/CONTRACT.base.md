@@ -35,23 +35,23 @@ This is the base contract shipped with Mergesmith. Each repo adds domain-specifi
 
 ## PR description template (mandatory — the `Spec:` field is required)
 
+Write it TIGHT: a human skims it. Recap first, evidence as bullets, decisions/questions LAST.
+No restating the diff, no checklist boilerplate.
+
     Spec: docs/superpowers/specs/<file>.md
 
-    ## Acceptance criteria satisfied
-    - [ ] <criterion> — evidence: <Vitest output / integration test / CI command output>
+    ## Recap
+    <2-4 sentences: what this PR does and how — the one paragraph a reviewer reads first>
 
-    ## Self-check (all ✓ or the PR stays draft)
-    - [ ] Scope: touched ONLY files foreseen by the spec's Scope
-    - [ ] No silent failures: fetch checks res.ok, catch logs the real error, errors return correct JSON + status
-    - [ ] Migrations: NEW files only, backward compatible, unique timestamp
-    - [ ] Tests: unit for every new pure function; integration where it touches the DB
-    - [ ] Build/lint/test green locally
+    ## Evidence
+    - <acceptance criterion> — <test name / command output that demonstrates it>
 
-    ## Deviations from the spec and assumptions
-    <"none" or a bullet list with justification>
+    ## Deviations & open questions
+    <"none", or bullets — workarounds used, assumptions made, decisions the owner must take>
 
-    ## Open questions
-    <ambiguities resolved with an assumption + decisions the human owner must make>
+The old self-check still applies as BEHAVIOR (scope respected, no silent failures, migrations
+append-only, tests for new non-trivial logic, build/lint/test green) — it is enforced by the
+review criteria below, it just doesn't need to be pasted into every PR body.
 
 ## Review criteria — REQUEST_CHANGES (blocking, any single one is enough)
 

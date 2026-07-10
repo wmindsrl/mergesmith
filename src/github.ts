@@ -178,13 +178,14 @@ export function comment(config: MergesmithConfig, pr: number, body: string): voi
   run(config, ['pr', 'comment', String(pr), '--repo', config.repo, '--body', body]);
 }
 
-/** Post a PR comment and return its id (REST, not `gh pr comment`, which prints only the URL). */
-export function commentWithId(config: MergesmithConfig, pr: number, body: string): number {
+/** Post a PR comment; returns id + SERVER-side created_at (the authoritative `since` bound for
+ * the answer poll — the local clock may be ahead of GitHub and would hide later comments). */
+export function commentWithId(config: MergesmithConfig, pr: number, body: string): { id: number; createdAt: string } {
   const out = run(
     config,
-    ['api', '--method', 'POST', `repos/${config.repo}/issues/${pr}/comments`, '-f', `body=${body}`, '--jq', '.id'],
+    ['api', '--method', 'POST', `repos/${config.repo}/issues/${pr}/comments`, '-f', `body=${body}`, '--jq', '{id: .id, createdAt: .created_at}'],
   );
-  return Number(out);
+  return JSON.parse(out) as { id: number; createdAt: string };
 }
 
 export interface PrComment {
@@ -213,6 +214,23 @@ export function botLogin(config: MergesmithConfig): string | null {
     cachedBotLogin = tryRun(config, ['api', 'user', '--jq', '.login']);
   }
   return cachedBotLogin;
+}
+
+const permissionCache = new Map<string, string>();
+
+/** FAIL-CLOSED authorization gate for decision answers: only repo collaborators with write or
+ * admin count as "the code-owner". Anything else — read-only users, drive-by accounts on a public
+ * repo, third-party bots, or an unreadable permission — is NOT authorized. */
+export function authorHasWriteAccess(config: MergesmithConfig, login: string): boolean {
+  const key = `${config.repo}:${login}`;
+  if (!permissionCache.has(key)) {
+    const out = tryRun(config, [
+      'api', `repos/${config.repo}/collaborators/${encodeURIComponent(login)}/permission`, '--jq', '.permission',
+    ]);
+    permissionCache.set(key, out ?? 'none');
+  }
+  const permission = permissionCache.get(key)!;
+  return permission === 'admin' || permission === 'write' || permission === 'maintain';
 }
 
 // ---- Labels (best-effort: never break the loop if a label op fails) ----

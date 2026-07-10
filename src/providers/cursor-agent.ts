@@ -64,8 +64,12 @@ export function createCursorAgentProvider(opts: {
 
     async verify(input: VerifyInput): Promise<Verdict> {
       const cwd = input.repoPath ?? process.cwd();
-      const out = verdictPath(cwd);
-      if (existsSync(out)) rmSync(out);
+      // Pre-clean BOTH verdict files. The per-PR one is critical: a session that crashed after
+      // writing it would otherwise leave a stale verdict that readVerdict later applies to a
+      // NEW, unreviewed SHA (fail-open on an APPROVE).
+      for (const stale of [verdictPath(cwd, input.prNumber), verdictPath(cwd)]) {
+        if (existsSync(stale)) rmSync(stale);
+      }
 
       // Re-review: same file convention as claude-code — the command reads the context file
       // from the repo root and scopes itself to previous blockers + delta.

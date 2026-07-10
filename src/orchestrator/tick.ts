@@ -5,7 +5,7 @@ import { basename } from 'node:path';
 import { heartbeatPath, loadConfig, pausedFlagPath, reposRegistryPath, type MergesmithConfig } from '../config.js';
 import { acquireRepoLock } from '../lock.js';
 import { readJson, writeJson } from '../lib.js';
-import { addLabels, botLogin, branchHead, ciState, commentsSince, listOpenPRs, prStatesForBranch, type OpenPR, type PrComment } from '../github.js';
+import { addLabels, authorHasWriteAccess, botLogin, branchHead, ciState, commentsSince, listOpenPRs, prStatesForBranch, type OpenPR, type PrComment } from '../github.js';
 import { getImplementer, getVerifier } from '../providers/registry.js';
 import { postSlack } from '../slack.js';
 import { adoptBranchThread, setStateReaction, threadedPost } from '../thread.js';
@@ -26,7 +26,7 @@ import {
   markReviewed,
   refForBranch,
   saveState,
-  setLastVerdictAnswer,
+  appendSettledDecision,
   setRefForBranch,
   setRework,
   setThread,
@@ -117,9 +117,18 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
       const decision = getDecision(config.repo, pr.number);
       if (decision) {
         if (pr.headRefOid !== decision.sha) {
-          // New push while the question was pending: review the new SHA normally (the re-review
-          // context still carries the unanswered question, so the verifier can re-ask if needed).
-          clearDecision(config.repo, pr.number);
+          // New push while the question was pending: before reviewing the new SHA, sweep for an
+          // answer that may have landed together with the push — otherwise it would be silently
+          // lost and the verifier would re-ask the same question.
+          try {
+            const answer = readDecisionAnswer(config, pr.number, decision);
+            if (answer) {
+              await threadedPost(config, pr.number, `:arrow_right: PR #${pr.number}: risposta di @${answer.author} registrata — "${answerExcerpt(answer.body)}"`);
+            }
+          } catch (error) {
+            console.error(`✗ decision-sweep PR #${pr.number}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+          clearDecision(config.repo, pr.number); // no-op if readDecisionAnswer already cleared it
         } else {
           try {
             const answered = await checkDecisionAnswer(config, pr.number, decision);
@@ -338,24 +347,42 @@ async function sweepDispatchStalls(config: MergesmithConfig, impl: ImplementerPr
   if (changed) saveState(config.repo, state);
 }
 
-/** First comment after the question that isn't ours: the owner's answer. Pure (unit-tested).
- * `bot === null` (login unreadable) fails open on authorship: any later comment counts — the
- * bot never comments on a decision-parked PR, so a false positive requires an unrelated comment. */
-export function pickAnswer(comments: PrComment[], questionCommentId: number, bot: string | null): PrComment | null {
-  return comments.find((c) => c.id > questionCommentId && (bot === null || c.author !== bot)) ?? null;
+/** First comment after the question written by an AUTHORIZED author: the owner's answer.
+ * Pure (unit-tested). Authorization is FAIL-CLOSED via `isAuthorized` (repo write/admin): a
+ * drive-by account or third-party bot commenting on the PR must never decide for the owner. */
+export function pickAnswer(
+  comments: PrComment[],
+  questionCommentId: number,
+  bot: string | null,
+  isAuthorized: (login: string) => boolean,
+): PrComment | null {
+  return (
+    comments.find((c) => c.id > questionCommentId && (bot === null || c.author !== bot) && isAuthorized(c.author)) ?? null
+  );
 }
 
-// Poll for the owner's reply to a NEEDS_DECISION question. Found → store it as binding re-review
-// context and unpark the PR (caller re-verifies in the same tick). Not found → stay parked.
-async function checkDecisionAnswer(config: MergesmithConfig, pr: number, decision: DecisionRecord): Promise<boolean> {
+/** Answer excerpt for Slack (markup is escaped downstream by buildSlackText). */
+function answerExcerpt(body: string): string {
+  return (body.split('\n')[0] ?? '').slice(0, 120);
+}
+
+// Read the owner's reply to a NEEDS_DECISION question, if it landed. Found → record it as a
+// SETTLED decision (carried across all later rounds). Returns the answering comment or null.
+function readDecisionAnswer(config: MergesmithConfig, pr: number, decision: DecisionRecord): PrComment | null {
   const comments = commentsSince(config, pr, decision.askedAt);
-  const answer = pickAnswer(comments, decision.commentId, botLogin(config));
-  if (!answer) return false;
-  setLastVerdictAnswer(config.repo, pr, answer.body);
+  const answer = pickAnswer(comments, decision.commentId, botLogin(config), (login) => authorHasWriteAccess(config, login));
+  if (!answer) return null;
+  appendSettledDecision(config.repo, pr, decision.question.text, answer.body);
   clearDecision(config.repo, pr);
+  return answer;
+}
+
+// Poll for the owner's reply and unpark the PR (caller re-verifies in the same tick).
+async function checkDecisionAnswer(config: MergesmithConfig, pr: number, decision: DecisionRecord): Promise<boolean> {
+  const answer = readDecisionAnswer(config, pr, decision);
+  if (!answer) return false;
   unmarkReviewed(config.repo, pr);
-  const excerpt = (answer.body.split('\n')[0] ?? '').slice(0, 120);
-  await threadedPost(config, pr, `:arrow_right: PR #${pr}: risposta di @${answer.author} — "${excerpt}" — ri-verifico subito`);
+  await threadedPost(config, pr, `:arrow_right: PR #${pr}: risposta di @${answer.author} — "${answerExcerpt(answer.body)}" — ri-verifico subito`);
   await setStateReaction(config, pr, 'rework');
   return true;
 }
