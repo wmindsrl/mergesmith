@@ -70,6 +70,9 @@ test('rework state: set/get/clear round-trip', () => {
     assert.deepEqual(getRework(repo, 42), { sha: 'abc', followupAt: 1000, attempts: 1, fixPrompt: 'fix it' });
     clearRework(repo, 42);
     assert.equal(getRework(repo, 42), null);
+    // delivered:false (verdetto su GitHub, follow-up non consegnato — issue #1) sopravvive al round-trip
+    setRework(repo, 43, { sha: 'def', followupAt: 2000, attempts: 0, fixPrompt: 'fix', delivered: false });
+    assert.equal(getRework(repo, 43)?.delivered, false);
   });
 });
 

@@ -60,6 +60,21 @@ async function cursorFetch(apiKeyEnv: string, path: string, init?: RequestInit):
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+// Classify a failed run POST. agent_archived is handled BEFORE this (unarchive + retry in
+// followup); here a 409 is busy-or-equivalent: retryable at the next tick without escalation.
+function classifyFollowupError(ref: AgentRef, text: string): FollowupError {
+  // Match the status token emitted by cursorFetch ("→ 409:"), not a bare "409"
+  // substring (a hex agentId could contain it).
+  if (text.includes('→ 409:') || text.includes('agent_busy')) {
+    return new FollowupError(`agent ${ref.agentId} occupato (409)`, 'busy');
+  }
+  // Network blip / rate-limit / 5xx → retry next tick, don't escalate to needs-human.
+  if (isTransientError(text)) {
+    return new FollowupError(text, 'transient');
+  }
+  return new FollowupError(text, 'other');
+}
+
 const STATUS_MAP: Record<string, ImplementerState> = {
   RUNNING: 'running',
   CREATING: 'running',
@@ -137,23 +152,28 @@ export function createCursorProvider(opts: {
     },
 
     async followup(ref: AgentRef, message: string): Promise<void> {
-      try {
-        await cursorFetch(opts.apiKeyEnv, `/v1/agents/${ref.agentId}/runs`, {
+      const send = (): Promise<unknown> =>
+        cursorFetch(opts.apiKeyEnv, `/v1/agents/${ref.agentId}/runs`, {
           method: 'POST',
           body: JSON.stringify({ prompt: { text: message } }),
         });
+      try {
+        await send();
       } catch (error) {
         const text = String(error);
-        // Match the status token emitted by cursorFetch ("→ 409:"), not a bare "409"
-        // substring (a hex agentId could contain it).
-        if (text.includes('→ 409:') || text.includes('agent_busy')) {
-          throw new FollowupError(`agent ${ref.agentId} occupato (409)`, 'busy');
+        // 409 agent_archived: Cursor archivia l'agent pochi minuti dopo che ha finito — NON è
+        // "busy" e non si risolve mai da solo (issue #1). Unarchive + un solo retry: lo stesso
+        // agent conserva il contesto della PR.
+        if (text.includes('agent_archived')) {
+          try {
+            await cursorFetch(opts.apiKeyEnv, `/v1/agents/${ref.agentId}/unarchive`, { method: 'POST' });
+            await send();
+            return;
+          } catch (retryError) {
+            throw classifyFollowupError(ref, String(retryError));
+          }
         }
-        // Network blip / rate-limit / 5xx → retry next tick, don't escalate to needs-human.
-        if (isTransientError(text)) {
-          throw new FollowupError(text, 'transient');
-        }
-        throw new FollowupError(text, 'other');
+        throw classifyFollowupError(ref, text);
       }
     },
 

@@ -45,6 +45,9 @@ export interface ReworkRecord {
   followupAt: number; // Date.now() of the last follow-up / recovery
   attempts: number; // auto-recover attempts so far
   fixPrompt: string; // the instruction to (re-)send to the agent
+  /** false = the verdict is on GitHub but the follow-up never reached the agent (busy/transient at
+   * verdict time) — the tick retries ONLY the delivery, never the verify. undefined = delivered (legacy). */
+  delivered?: boolean;
 }
 
 export interface StateFile {

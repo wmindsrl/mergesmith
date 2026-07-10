@@ -72,9 +72,18 @@ export async function applyVerdict(
       await setStateReaction(config, pr, 'rework');
     } catch (error) {
       if (error instanceof FollowupError && (error.kind === 'busy' || error.kind === 'transient')) {
-        // Do NOT mark the SHA: the tick retries next round (dedup avoids duplicate comments).
+        // The review is already on GitHub — persist the verdict and retry ONLY the delivery next
+        // tick (issue #1: re-verifying here re-ran a full LLM session and posted a duplicate
+        // CHANGES_REQUESTED review every tick).
+        markReviewed(config.repo, pr, sha);
+        setRework(config.repo, pr, { sha, followupAt: Date.now(), attempts: 0, fixPrompt, delivered: false });
         const why = error.kind === 'busy' ? 'agent occupato' : 'errore di rete transitorio';
-        await threadedPost(config, pr, `:hourglass: PR #${pr}: REQUEST_CHANGES su GitHub ma ${why} — retry al prossimo tick`);
+        await threadedPost(
+          config,
+          pr,
+          `:hourglass: PR #${pr}: REQUEST_CHANGES su GitHub ma follow-up non consegnato (${why}) — riprovo solo la consegna al prossimo tick`,
+        );
+        await setStateReaction(config, pr, 'rework');
         return;
       }
       // Couldn't start the rework (no agent + adopt failed / permanent error) → a human must look.

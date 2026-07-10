@@ -317,6 +317,25 @@ async function handleReworkStall(
   rework: ReworkRecord,
 ): Promise<void> {
   adoptBranchThread(config, pr, branch);
+
+  // Verdict applied but the follow-up never reached the agent (busy/transient at verdict time,
+  // issue #1): retry ONLY the delivery — the review is already on GitHub; re-verifying would
+  // duplicate it. On failure fall through: the stall logic below bounds the wait (TTL/idle →
+  // adoptBranch, which hands the SAME fixPrompt to a fresh agent).
+  if (rework.delivered === false) {
+    const ref = refForBranch(config.repo, branch);
+    if (ref) {
+      try {
+        await impl.followup(ref, rework.fixPrompt);
+        setRework(config.repo, pr, { ...rework, followupAt: Date.now(), delivered: true });
+        await threadedPost(config, pr, `:arrow_right: PR #${pr}: follow-up consegnato all'agent — rework in corso`);
+        return;
+      } catch (error) {
+        console.error(`✗ delivery follow-up PR #${pr}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+  }
+
   const elapsed = Date.now() - rework.followupAt;
   if (elapsed < REWORK_GRACE_MS) return; // give the follow-up run time to start + work
 
@@ -331,7 +350,8 @@ async function handleReworkStall(
   if (rework.attempts < MAX_RECOVER && impl.adoptBranch) {
     const res = await impl.adoptBranch(config.repo, branch, rework.fixPrompt);
     setRefForBranch(config.repo, branch, res.ref);
-    setRework(config.repo, pr, { ...rework, followupAt: Date.now(), attempts: rework.attempts + 1 });
+    // delivered: the fresh agent received fixPrompt at spawn — don't re-send it next tick.
+    setRework(config.repo, pr, { ...rework, followupAt: Date.now(), attempts: rework.attempts + 1, delivered: true });
     await threadedPost(
       config,
       pr,

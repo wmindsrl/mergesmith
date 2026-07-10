@@ -5,6 +5,13 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] — 2026-07-10
+
+### Fixed
+- **409 `agent_archived` non è più "busy" → stop al loop infinito di re-verify con review duplicate** (#1). Cursor archivia l'agent pochi minuti dopo che ha finito; il follow-up di rework riceveva `409 agent_archived`, classificato come `busy` e ritentato a ogni tick — ri-eseguendo l'intera verify (~15 min) e postando una review CHANGES_REQUESTED duplicata, per sempre. Due fix:
+  - **`providers/cursor.ts`**: il body del 409 viene discriminato — `agent_archived` → `POST /v1/agents/{id}/unarchive` + un solo retry (lo stesso agent conserva il contesto della PR); solo il resto dei 409 resta `busy`.
+  - **Verify disaccoppiata dalla consegna del follow-up**: su fallimento retryable del follow-up (`busy`/`transient`) il verdetto viene persistito (`markReviewed` + `ReworkRecord` con `delivered:false`), così il tick successivo ritenta **solo la consegna** — mai la re-verify, mai la review duplicata. Se la consegna continua a fallire, il rework watchdog esistente fa da bound (TTL/idle → agent fresco via `adoptBranch`, poi needs-human).
+
 ## [0.5.4] — 2026-07-06
 
 ### Changed
