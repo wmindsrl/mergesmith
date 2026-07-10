@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { VerifyPool } from '../src/orchestrator/watch.ts';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { loadConfig } from '../src/config.ts';
+import { acquireRepoLock } from '../src/lock.ts';
+import { VerifyPool, parseWatchCliArgs, watchRepo } from '../src/orchestrator/watch.ts';
 import type { OpenPR } from '../src/github.ts';
 
 const pr = (n: number): OpenPR => ({ number: n, headRefOid: `sha-${n}`, headRefName: `cursor/x-${n}`, isDraft: false, labels: [] });
@@ -76,4 +81,45 @@ test('VerifyPool: drain attende coda + in-volo; run che rigetta non uccide il po
   pool.submit(pr(2));
   await pool.drain();
   assert.equal(pool.busy, false); // il reject di #1 è loggato, #2 è comunque girata
+});
+
+test('parseWatchCliArgs: accetta numeri positivi e converte unità', () => {
+  assert.deepEqual(parseWatchCliArgs('30', '10'), { intervalMs: 30_000, maxRuntimeMs: 600_000 });
+  assert.deepEqual(parseWatchCliArgs(null, null), {});
+});
+
+test('parseWatchCliArgs: rifiuta valori non numerici', () => {
+  assert.throws(() => parseWatchCliArgs('foo', null), /--interval/);
+  assert.throws(() => parseWatchCliArgs(null, '-5'), /--max-runtime/);
+  assert.throws(() => parseWatchCliArgs('0', null), /--interval/);
+});
+
+test('watchRepo: rilascia il lock se getVerifier fallisce', async () => {
+  const prevHome = process.env.MERGESMITH_HOME;
+  const dir = mkdtempSync(join(tmpdir(), 'mergesmith-watch-lock-'));
+  process.env.MERGESMITH_HOME = dir;
+  try {
+    const configDir = mkdtempSync(join(tmpdir(), 'mergesmith-watch-cfg-'));
+    try {
+      writeFileSync(
+        join(configDir, 'mergesmith.config.json'),
+        JSON.stringify({
+          repo: 'org/watch-lock-test',
+          implementer: { provider: 'cursor' },
+          verifier: { provider: 'unknown-provider' },
+        }),
+      );
+      const config = loadConfig(configDir);
+      await assert.rejects(() => watchRepo(config), /Verifier provider sconosciuto/);
+      const release = acquireRepoLock(config.repo);
+      assert.ok(release, 'lock deve essere rilasciato dopo errore getVerifier');
+      release!();
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  } finally {
+    if (prevHome === undefined) delete process.env.MERGESMITH_HOME;
+    else process.env.MERGESMITH_HOME = prevHome;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

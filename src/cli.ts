@@ -6,7 +6,7 @@ import { readJson } from './lib.js';
 import { dispatchSpec } from './orchestrator/dispatch.js';
 import { dispatchIssue } from './orchestrator/issue.js';
 import { tickAll, tickRepo } from './orchestrator/tick.js';
-import { watchAll, watchRepo } from './orchestrator/watch.js';
+import { parseWatchCliArgs, watchAll, watchRepo } from './orchestrator/watch.js';
 import { markReviewed, refForBranch, setRefForBranch } from './orchestrator/state.js';
 import { getImplementer, getVerifier } from './providers/registry.js';
 import { ensureLabel } from './github.js';
@@ -88,12 +88,7 @@ async function main(): Promise<void> {
     }
 
     case 'watch': {
-      const intervalArg = argValue(rest, '--interval');
-      const maxRuntimeArg = argValue(rest, '--max-runtime');
-      const opts = {
-        ...(intervalArg ? { intervalMs: Number(intervalArg) * 1000 } : {}),
-        ...(maxRuntimeArg ? { maxRuntimeMs: Number(maxRuntimeArg) * 60_000 } : {}),
-      };
+      const opts = parseWatchCliArgs(argValue(rest, '--interval'), argValue(rest, '--max-runtime'));
       try {
         if (rest.includes('--all')) await watchAll(opts);
         else await watchRepo(loadConfig(), opts);

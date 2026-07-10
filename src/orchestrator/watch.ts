@@ -31,6 +31,26 @@ const DEFAULT_INTAKE_EVERY_N = 4;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Parse `mergesmith watch --interval/--max-runtime` (seconds / minutes). Fail-loud on garbage. */
+export function parseWatchCliArgs(intervalSecs: string | null, maxRuntimeMins: string | null): WatchOptions {
+  const opts: WatchOptions = {};
+  if (intervalSecs != null) {
+    const n = Number(intervalSecs);
+    if (!Number.isFinite(n) || n <= 0) {
+      throw new Error(`--interval richiede un numero positivo di secondi, ricevuto: "${intervalSecs}"`);
+    }
+    opts.intervalMs = n * 1000;
+  }
+  if (maxRuntimeMins != null) {
+    const n = Number(maxRuntimeMins);
+    if (!Number.isFinite(n) || n <= 0) {
+      throw new Error(`--max-runtime richiede un numero positivo di minuti, ricevuto: "${maxRuntimeMins}"`);
+    }
+    opts.maxRuntimeMs = n * 60_000;
+  }
+  return opts;
+}
+
 /**
  * Persistent verify pool: at most `max` concurrent verifies, deduped by PR number — a PR
  * already queued or in flight is never double-submitted, so the scan can re-submit blindly
@@ -94,25 +114,25 @@ export async function watchRepo(config: MergesmithConfig, opts: WatchOptions = {
     return;
   }
 
-  const verifier = getVerifier(config);
-  const pool = new VerifyPool(
-    (pr) => verifyAndApply(config, { repoPath: opts.repoPath }, verifier, pr),
-    MAX_CONCURRENT_VERIFY,
-  );
-
-  let stop: string | null = null;
-  const onSignal = (signal: string) => () => {
-    stop = signal;
-  };
-  process.once('SIGINT', onSignal('SIGINT'));
-  process.once('SIGTERM', onSignal('SIGTERM'));
-
-  const startedAt = Date.now();
-  console.log(`watch ${config.repo}: avviato (scan ogni ${Math.round(intervalMs / 1000)}s, exit tra ${Math.round(maxRuntimeMs / 60000)}m)`);
-  let iteration = 0;
-  let pausedLogged = false;
-
   try {
+    const verifier = getVerifier(config);
+    const pool = new VerifyPool(
+      (pr) => verifyAndApply(config, { repoPath: opts.repoPath }, verifier, pr),
+      MAX_CONCURRENT_VERIFY,
+    );
+
+    let stop: string | null = null;
+    const onSignal = (signal: string) => () => {
+      stop = signal;
+    };
+    process.once('SIGINT', onSignal('SIGINT'));
+    process.once('SIGTERM', onSignal('SIGTERM'));
+
+    const startedAt = Date.now();
+    console.log(`watch ${config.repo}: avviato (scan ogni ${Math.round(intervalMs / 1000)}s, exit tra ${Math.round(maxRuntimeMs / 60000)}m)`);
+    let iteration = 0;
+    let pausedLogged = false;
+
     while (stop === null && Date.now() - startedAt < maxRuntimeMs) {
       refreshRepoLock(config.repo);
       if (existsSync(pausedFlagPath())) {
@@ -136,10 +156,10 @@ export async function watchRepo(config: MergesmithConfig, opts: WatchOptions = {
     }
     console.log(`watch ${config.repo}: ${stop ?? 'max-runtime'} — drain delle verify in corso`);
     await pool.drain();
+    console.log(`watch ${config.repo}: chiuso pulito dopo ${Math.round((Date.now() - startedAt) / 60000)}m`);
   } finally {
     release();
   }
-  console.log(`watch ${config.repo}: chiuso pulito dopo ${Math.round((Date.now() - startedAt) / 60000)}m`);
 }
 
 export async function watchAll(opts: Omit<WatchOptions, 'repoPath'> = {}): Promise<void> {
