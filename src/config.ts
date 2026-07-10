@@ -25,6 +25,8 @@ export interface VerifierConfig {
   command: string;
   /** Model override for the review (claude-code: `claude --model`; cursor-agent: `agent --model`). */
   model?: string;
+  /** Faster model for RE-reviews (round ≥2, scoped to previous blockers + delta). Falls back to `model`. */
+  reworkModel?: string;
   /** Env var for Cursor API key when provider is cursor-agent. Defaults to implementer.apiKeyEnv. */
   apiKeyEnv?: string;
 }
@@ -144,6 +146,7 @@ export function loadConfig(cwd: string = process.cwd()): MergesmithConfig {
           ? '.cursor/commands/mergesmith-validate-pr.md'
           : '/validate-pr'),
       model: raw.verifier.model,
+      reworkModel: raw.verifier.reworkModel,
       apiKeyEnv: raw.verifier.apiKeyEnv,
     },
     github: { tokenEnv: raw.github?.tokenEnv ?? 'GH_TOKEN_MERGESMITH' },

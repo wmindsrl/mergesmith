@@ -1,14 +1,38 @@
 // Provider-neutral side-effects: turn a Verdict into GitHub actions + labels + Slack.
 // Every verifier funnels through here, so merge/gate policy lives in exactly one place.
 import type { MergesmithConfig } from '../config.js';
-import { addLabels, approve, comment, mergeAuto, prMergeable, removeLabels, requestChanges } from '../github.js';
+import { addLabels, approve, comment, commentWithId, mergeAuto, prMergeable, removeLabels, requestChanges } from '../github.js';
 import { adoptBranchThread, setStateReaction, threadedPost } from '../thread.js';
 import { getImplementer } from '../providers/registry.js';
-import { FollowupError, type Verdict } from '../providers/types.js';
-import { issueForBranch, markIssueDone, markReviewed, refForBranch, setRefForBranch, setRework } from './state.js';
+import { FollowupError, type DecisionQuestion, type Verdict } from '../providers/types.js';
+import {
+  bumpReworkRound,
+  clearLastVerdict,
+  clearReworkRound,
+  issueForBranch,
+  markIssueDone,
+  markReviewed,
+  refForBranch,
+  setDecision,
+  setLastVerdict,
+  setRefForBranch,
+  setRework,
+} from './state.js';
 
 function firstLine(text: string): string {
   return text.split('\n')[0] ?? text;
+}
+
+// The owner question as PR-comment markdown: options as a bullet list, recommended starred.
+function renderQuestion(q: DecisionQuestion): string {
+  const lines = [`**${q.text}**`];
+  if (q.options?.length) {
+    lines.push('');
+    for (const o of q.options) {
+      lines.push(`- **${o.key}** — ${o.label}${o.recommended ? ' ⭐ _consigliata_' : ''}`);
+    }
+  }
+  return lines.join('\n');
 }
 
 // " (claude-code/opus)" — which engine+model produced the verdict.
@@ -50,6 +74,11 @@ export async function applyVerdict(
   if (verdict.decision === 'REQUEST_CHANGES') {
     requestChanges(config, pr, verdictBody(verdict));
     setLabels([L.rework], [L.approved, L.needsHuman]);
+    // Re-review context for the next round: the verifier judges ONLY these blockers + the delta.
+    setLastVerdict(config.repo, pr, { sha, verdict });
+    // Trickle alarm: from round 3 the review ping-pong is costing hours — ping the owner, who can
+    // often unblock with one decision.
+    const rounds = bumpReworkRound(config.repo, pr);
 
     const fixPrompt = verdict.followupMessage ?? verdict.rationale;
     const impl = getImplementer(config);
@@ -68,7 +97,13 @@ export async function applyVerdict(
       markReviewed(config.repo, pr, sha);
       // Arm the rework watchdog: the tick verifies this follow-up lands a new SHA, else recovers.
       setRework(config.repo, pr, { sha, followupAt: Date.now(), attempts: 0, fixPrompt });
-      await threadedPost(config, pr, `:no_entry: REQUEST_CHANGES PR #${pr} — ${firstLine(verdict.rationale)}${attributionSuffix(verdict)}`);
+      const trickle = rounds >= 3 ? ` — :rotating_light: ${rounds}° round: se c'è una scelta che puoi sbloccare tu, rispondi sulla PR` : '';
+      await threadedPost(
+        config,
+        pr,
+        `:no_entry: REQUEST_CHANGES PR #${pr} (round ${rounds}) — ${firstLine(verdict.rationale)}${attributionSuffix(verdict)}${trickle}`,
+        { mention: rounds >= 3 },
+      );
       await setStateReaction(config, pr, 'rework');
     } catch (error) {
       if (error instanceof FollowupError && (error.kind === 'busy' || error.kind === 'transient')) {
@@ -94,6 +129,38 @@ export async function applyVerdict(
       });
       await setStateReaction(config, pr, 'needs_human');
     }
+    return;
+  }
+
+  if (verdict.decision === 'NEEDS_DECISION') {
+    // The blocker is a CHOICE (workaround accettabile? approccio A o B?), not a defect: don't
+    // ping-pong with the implementer — ask the code-owner ONE question on the PR, notify Slack,
+    // and park until the answer lands. The answer re-triggers a (fast, delta-scoped) re-verify.
+    const q = verdict.question!; // fail-closed validated by readVerdict
+    const body = [
+      '## :vertical_traffic_light: Mergesmith — serve una tua decisione',
+      '',
+      verdict.rationale,
+      '',
+      renderQuestion(q),
+      '',
+      q.options?.length
+        ? `_Rispondi con un commento qui sotto: la lettera dell'opzione (es. \`${q.options[0]!.key}\`) o testo libero. Il loop riprende da solo._`
+        : '_Rispondi con un commento qui sotto: `sì` / `no` o testo libero. Il loop riprende da solo._',
+      ...(verdict.attribution ? ['', `— asked by${attributionSuffix(verdict)}`] : []),
+    ].join('\n');
+    const commentId = commentWithId(config, pr, body);
+    setLastVerdict(config.repo, pr, { sha, verdict });
+    setDecision(config.repo, pr, { sha, question: q, askedAt: new Date().toISOString(), commentId });
+    markReviewed(config.repo, pr, sha); // never re-verify this SHA while the question is pending
+    setLabels([], [L.rework]); // NOT needsHuman: that label makes the tick skip the PR entirely
+    await threadedPost(
+      config,
+      pr,
+      `:question: PR #${pr} — decisione richiesta: ${firstLine(q.text)}\nhttps://github.com/${config.repo}/pull/${pr}#issuecomment-${commentId}${attributionSuffix(verdict)}`,
+      { mention: true },
+    );
+    await setStateReaction(config, pr, 'decision');
     return;
   }
 
@@ -164,6 +231,8 @@ export async function applyVerdict(
   }
   setLabels([L.approved], [L.rework, L.needsHuman]);
   markReviewed(config.repo, pr, sha);
+  clearLastVerdict(config.repo, pr); // review cycle closed — no re-review context to carry
+  clearReworkRound(config.repo, pr);
 
   // If this PR closes a tracked issue, mark it completed. A merge into a non-default branch
   // does NOT auto-close the issue on GitHub, so this label signals "work done" until the

@@ -28,6 +28,7 @@ export function getVerifier(config: MergesmithConfig): VerifierProvider {
         repo: config.repo,
         // MERGESMITH_VERIFIER_MODEL (env or .env.local) overrides the config default — quick swap.
         model: loadEnvVarOptional('MERGESMITH_VERIFIER_MODEL') ?? config.verifier.model,
+        reworkModel: loadEnvVarOptional('MERGESMITH_VERIFIER_REWORK_MODEL') ?? config.verifier.reworkModel,
       });
     case 'cursor-agent':
     case 'cursor':
@@ -36,6 +37,7 @@ export function getVerifier(config: MergesmithConfig): VerifierProvider {
         repo: config.repo,
         apiKeyEnv: config.verifier.apiKeyEnv ?? config.implementer.apiKeyEnv,
         model: loadEnvVarOptional('MERGESMITH_VERIFIER_MODEL') ?? config.verifier.model,
+        reworkModel: loadEnvVarOptional('MERGESMITH_VERIFIER_REWORK_MODEL') ?? config.verifier.reworkModel,
       });
     default:
       throw new Error(

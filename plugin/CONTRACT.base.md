@@ -55,12 +55,18 @@ This is the base contract shipped with Mergesmith. Each repo adds domain-specifi
 
 ## Review criteria — REQUEST_CHANGES (blocking, any single one is enough)
 
+The default verdict for working, spec-compliant code is **APPROVE (with advisory
+comments where useful)**. Style, naming, minor refactors, and hypothetical edge cases
+outside the spec are never blocking. A blocking review must be **exhaustive on the first
+round**: raising in round N a blocker that was visible in round 1 is a review defect.
+
 1. **CI red** (build/lint/test failing).
 2. **Scope creep**: files changed outside the spec's Scope, or inside its Out-of-scope.
 3. **Silent failure**: `fetch` without checking `res.ok`, `catch` without logging the real
    error, HTTP 200 on a logical failure, implicit/invented fallbacks where data is missing.
-4. **Missing tests**: a new pure function without a unit test; a DB-touching
-   repository/route without an integration test.
+4. **Missing tests on new, non-trivial logic**: a new pure function with real logic without
+   a unit test; a DB-touching repository/route without an integration test. Trivial glue and
+   unchanged code do not require new tests.
 5. **Migration** that edits an existing file (immutability) or is not backward compatible.
 6. **Spec acceptance criteria not satisfied or not demonstrated** (evidence missing —
    declared is not the same as demonstrated). Evidence = **automated tests** (Vitest unit,
@@ -68,6 +74,16 @@ This is the base contract shipped with Mergesmith. Each repo adds domain-specifi
    output in the PR body. **Missing screenshots is never a blocking reason.**
 7. **Secrets/credentials in cleartext** in code, config, or logs.
 8. **Structural repo patterns violated** where the spec explicitly invokes them.
+
+## Decisions belong to the code-owner — NEEDS_DECISION
+
+When the blocker is a **choice**, not a defect, the verifier does not loop with the
+implementer: it emits a `NEEDS_DECISION` verdict with **one well-written question at a
+time** for the human code-owner — yes/no, or 2-4 options with exactly one recommended.
+Typical cases: the implementer hit a bug/obstacle and shipped a **workaround** (is it
+acceptable?); an architectural or product choice is not derivable from spec or contract.
+The orchestrator posts the question on the PR, notifies the owner on Slack, and resumes
+the loop automatically from the answer — which is **binding** for later review rounds.
 
 ## Merge policy
 
@@ -103,3 +119,5 @@ blocking.
 
 Anything not covered by the spec or this contract must be asked BEFORE implementing —
 as an "Open question" in the draft PR, or as a blocking input on the configured Slack channel.
+At review time, an unresolved ambiguity that only the code-owner can settle becomes a
+`NEEDS_DECISION` question (see above), never an implement-guess-rework loop.

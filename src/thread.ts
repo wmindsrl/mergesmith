@@ -14,6 +14,7 @@ const STATE_EMOJI = {
   ci_red: 'red_circle', //          🔴 CI rossa
   needs_human: 'warning', //        ⚠️ serve un umano (needs-human / path critico)
   stalled: 'rotating_light', //     🚨 stallo / agent morto
+  decision: 'question', //          ❓ decisione richiesta al code-owner
 } as const;
 export type PrState = keyof typeof STATE_EMOJI;
 const ALL_STATE_EMOJI: string[] = Object.values(STATE_EMOJI);

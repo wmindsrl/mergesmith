@@ -8,7 +8,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync, rmSync } from 'node:fs';
 import type { Verdict, VerifierProvider, VerifyInput } from './types.js';
-import { readVerdict, verdictPath } from './verdict.js';
+import { readVerdict, verdictPath, writeRereviewContext } from './verdict.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -26,6 +26,8 @@ export function createClaudeCodeProvider(opts: {
   command: string;
   repo: string;
   model?: string;
+  /** Faster model for re-reviews (scoped to previous blockers + delta). Falls back to `model`. */
+  reworkModel?: string;
   timeoutMs?: number;
 }): VerifierProvider {
   return {
@@ -40,8 +42,13 @@ export function createClaudeCodeProvider(opts: {
       const out = verdictPath(cwd, input.prNumber);
       if (existsSync(out)) rmSync(out); // pre-clean any stale per-PR verdict
 
+      // Re-review: materialize the previous-verdict context (the command reads the file and
+      // scopes itself to previous blockers + delta) and prefer the faster reworkModel.
+      const cleanup = input.rereview ? writeRereviewContext(cwd, input.prNumber, input.rereview) : null;
+      const model = input.rereview ? (opts.reworkModel ?? opts.model) : opts.model;
+
       const args = ['-p', `${opts.command} ${input.prNumber}`, '--permission-mode', 'acceptEdits'];
-      if (opts.model) args.push('--model', opts.model);
+      if (model) args.push('--model', model);
       try {
         // Async spawn (NOT execFileSync): concurrent verifies must not block the event loop.
         await execFileAsync('claude', args, {
@@ -51,8 +58,10 @@ export function createClaudeCodeProvider(opts: {
         });
       } catch (error) {
         throw new Error(`verifier claude-code: sessione fallita per PR #${input.prNumber}: ${String(error)}`);
+      } finally {
+        cleanup?.();
       }
-      return readVerdict(cwd, input.prNumber, 'claude-code', opts.model);
+      return readVerdict(cwd, input.prNumber, 'claude-code', model);
     },
 
     async synthesize(prompt: string): Promise<string> {

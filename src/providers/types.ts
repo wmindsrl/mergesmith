@@ -6,16 +6,35 @@ export type AgentRef = { provider: string; agentId: string; runId?: string };
 
 export type VerdictComment = { path: string; line?: number; body: string };
 
+/** One multiple-choice option for a NEEDS_DECISION question (2-4, exactly one recommended). */
+export type DecisionOption = { key: string; label: string; recommended?: boolean };
+
+/** The ONE owner question that unblocks a NEEDS_DECISION PR. Yes/no when options is absent. */
+export type DecisionQuestion = { text: string; options?: DecisionOption[] };
+
 export type Verdict = {
-  decision: 'APPROVE' | 'REQUEST_CHANGES';
+  decision: 'APPROVE' | 'REQUEST_CHANGES' | 'NEEDS_DECISION';
   /** true if the diff touches a CODEOWNERS critical path → no auto-merge, human review. */
   criticalPathHit: boolean;
   comments: VerdictComment[];
   rationale: string;
   /** REWORK message sent to the implementer when decision is REQUEST_CHANGES. */
   followupMessage?: string;
+  /** NEEDS_DECISION: the single question for the human code-owner (one at a time). */
+  question?: DecisionQuestion;
   /** Which engine+model produced this verdict — rendered in review/Slack messages. */
   attribution?: { engine: string; model?: string };
+};
+
+/** Context for a re-review: the previous verdict on this PR (+ the owner's answer, if the
+ * previous round was NEEDS_DECISION). The verifier judges ONLY previous blockers + delta
+ * regressions — never new discoveries outside the delta. */
+export type RereviewContext = {
+  /** Head SHA the previous verdict judged (delta base for the re-review). */
+  sha: string;
+  verdict: Verdict;
+  /** The code-owner's raw answer to verdict.question — BINDING for the re-review. */
+  answer?: string;
 };
 
 export type ImplementerState = 'running' | 'finished' | 'error' | 'expired';
@@ -69,6 +88,9 @@ export interface VerifyInput {
   codeownersPath: string;
   /** Local checkout dir of the target repo — the verify CLI runs here (multi-repo safe). */
   repoPath?: string;
+  /** Present when a previous verdict exists for this PR → the provider runs in RE-REVIEW mode
+   * (scoped to previous blockers + delta, on the faster `reworkModel` when configured). */
+  rereview?: RereviewContext;
 }
 
 export interface VerifierProvider {

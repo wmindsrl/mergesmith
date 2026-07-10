@@ -5,16 +5,19 @@ import { basename } from 'node:path';
 import { heartbeatPath, loadConfig, pausedFlagPath, reposRegistryPath, type MergesmithConfig } from '../config.js';
 import { acquireRepoLock } from '../lock.js';
 import { readJson, writeJson } from '../lib.js';
-import { addLabels, branchHead, ciState, listOpenPRs, prStatesForBranch, type OpenPR } from '../github.js';
+import { addLabels, botLogin, branchHead, ciState, commentsSince, listOpenPRs, prStatesForBranch, type OpenPR, type PrComment } from '../github.js';
 import { getImplementer, getVerifier } from '../providers/registry.js';
 import { postSlack } from '../slack.js';
 import { adoptBranchThread, setStateReaction, threadedPost } from '../thread.js';
 import { FollowupError, type ImplementerProvider } from '../providers/types.js';
 import {
   bumpVerifyFail,
+  clearDecision,
   clearRework,
   clearVerifyFail,
   getBranchThread,
+  getDecision,
+  getLastVerdict,
   getRework,
   getThread,
   knownBranches,
@@ -23,9 +26,12 @@ import {
   markReviewed,
   refForBranch,
   saveState,
+  setLastVerdictAnswer,
   setRefForBranch,
   setRework,
   setThread,
+  unmarkReviewed,
+  type DecisionRecord,
   type ReworkRecord,
 } from './state.js';
 import { applyVerdict } from './act.js';
@@ -104,6 +110,30 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
     // ri-ping a ogni push finché la label non viene rimossa).
     if (config.labels.enabled && pr.labels.includes(config.labels.needsHuman)) continue;
 
+    // NEEDS_DECISION parked: poll for the owner's answer to the question comment. Answer found →
+    // unmark the SHA and fall through, so THIS same tick re-verifies with the answer as binding
+    // context. No answer → the PR stays parked (no verify, no follow-up).
+    if (!opts.dryRun) {
+      const decision = getDecision(config.repo, pr.number);
+      if (decision) {
+        if (pr.headRefOid !== decision.sha) {
+          // New push while the question was pending: review the new SHA normally (the re-review
+          // context still carries the unanswered question, so the verifier can re-ask if needed).
+          clearDecision(config.repo, pr.number);
+        } else {
+          try {
+            const answered = await checkDecisionAnswer(config, pr.number, decision);
+            if (!answered) continue; // still waiting for the owner
+            // Keep the in-memory copy in sync with unmarkReviewed, so the re-verify happens NOW.
+            delete reviewed[String(pr.number)];
+          } catch (error) {
+            console.error(`✗ decision PR #${pr.number}: ${error instanceof Error ? error.message : String(error)}`);
+            continue;
+          }
+        }
+      }
+    }
+
     // Rework watchdog: a REQUEST_CHANGES follow-up must produce a new SHA. If it did, the agent
     // delivered → re-review. If not and the agent has stalled (closed its run without pushing, or
     // TTL elapsed), auto-recover with a fresh agent; after MAX_RECOVER attempts → needs-human.
@@ -172,6 +202,9 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
     const workers = Array.from({ length: Math.min(MAX_CONCURRENT_VERIFY, queue.length) }, async () => {
       for (let pr = queue.shift(); pr !== undefined; pr = queue.shift()) {
         try {
+          // Previous verdict (if any) → RE-REVIEW: scoped to previous blockers + delta, on the
+          // faster reworkModel; the owner's decision answer (if any) rides along as binding.
+          const rereview = getLastVerdict(config.repo, pr.number) ?? undefined;
           const verdict = await verifier.verify({
             prNumber: pr.number,
             repo: config.repo,
@@ -179,6 +212,7 @@ async function runTickCycle(config: MergesmithConfig, opts: TickOptions): Promis
             contractRef: config.contract.appendix,
             codeownersPath: config.criticalPaths,
             repoPath: opts.repoPath,
+            rereview,
           });
           await applyVerdict(config, pr.number, pr.headRefOid, pr.headRefName, verdict);
           clearVerifyFail(config.repo, pr.number, pr.headRefOid);
@@ -302,6 +336,28 @@ async function sweepDispatchStalls(config: MergesmithConfig, impl: ImplementerPr
   }
 
   if (changed) saveState(config.repo, state);
+}
+
+/** First comment after the question that isn't ours: the owner's answer. Pure (unit-tested).
+ * `bot === null` (login unreadable) fails open on authorship: any later comment counts — the
+ * bot never comments on a decision-parked PR, so a false positive requires an unrelated comment. */
+export function pickAnswer(comments: PrComment[], questionCommentId: number, bot: string | null): PrComment | null {
+  return comments.find((c) => c.id > questionCommentId && (bot === null || c.author !== bot)) ?? null;
+}
+
+// Poll for the owner's reply to a NEEDS_DECISION question. Found → store it as binding re-review
+// context and unpark the PR (caller re-verifies in the same tick). Not found → stay parked.
+async function checkDecisionAnswer(config: MergesmithConfig, pr: number, decision: DecisionRecord): Promise<boolean> {
+  const comments = commentsSince(config, pr, decision.askedAt);
+  const answer = pickAnswer(comments, decision.commentId, botLogin(config));
+  if (!answer) return false;
+  setLastVerdictAnswer(config.repo, pr, answer.body);
+  clearDecision(config.repo, pr);
+  unmarkReviewed(config.repo, pr);
+  const excerpt = (answer.body.split('\n')[0] ?? '').slice(0, 120);
+  await threadedPost(config, pr, `:arrow_right: PR #${pr}: risposta di @${answer.author} — "${excerpt}" — ri-verifico subito`);
+  await setStateReaction(config, pr, 'rework');
+  return true;
 }
 
 const REWORK_GRACE_MS = 5 * 60 * 1000; // don't judge a follow-up before its run has a chance to start

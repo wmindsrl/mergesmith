@@ -1,7 +1,7 @@
 // Local, per-repo state: dispatched runs + reviewed SHAs. Centralized under ~/.mergesmith.
 import { readJson, writeJson } from '../lib.js';
 import { reviewedPath, statePath } from '../config.js';
-import type { AgentRef } from '../providers/types.js';
+import type { AgentRef, DecisionQuestion, Verdict } from '../providers/types.js';
 
 export interface RunRecord {
   specId: string;
@@ -50,6 +50,23 @@ export interface ReworkRecord {
   delivered?: boolean;
 }
 
+/** A NEEDS_DECISION parked on the PR: the question comment is on GitHub, the loop polls for
+ * the owner's reply and re-verifies with the answer as binding context. */
+export interface DecisionRecord {
+  sha: string; // head SHA the question is about — a new push invalidates the pending question
+  question: DecisionQuestion;
+  askedAt: string; // ISO — `since` bound when polling for the answer
+  commentId: number; // the question comment; the answer is the first later non-bot comment
+}
+
+/** Previous verdict for a PR (re-review context). `answer` = the owner's reply to a
+ * NEEDS_DECISION question — binding for the next review round. */
+export interface LastVerdict {
+  sha: string;
+  verdict: Verdict;
+  answer?: string;
+}
+
 export interface StateFile {
   runs: Record<string, RunRecord>;
   issues?: Record<string, IssueRecord>;
@@ -58,6 +75,83 @@ export interface StateFile {
   rework?: Record<string, ReworkRecord>;
   /** Failed verify attempts per "pr:sha" — circuit breaker against re-running a broken verify forever. */
   verifyFails?: Record<string, number>;
+  /** NEEDS_DECISION pending per PR — the loop is waiting for the owner's comment. */
+  decisions?: Record<string, DecisionRecord>;
+  /** Last verdict per PR — re-review context (cleared on APPROVE). */
+  lastVerdicts?: Record<string, LastVerdict>;
+  /** REQUEST_CHANGES rounds per PR since the last APPROVE — trickle alarm at 3+. */
+  reworkRounds?: Record<string, number>;
+}
+
+// --- NEEDS_DECISION state ---
+
+export function getDecision(repo: string, pr: number): DecisionRecord | null {
+  return loadState(repo).decisions?.[String(pr)] ?? null;
+}
+
+export function setDecision(repo: string, pr: number, rec: DecisionRecord): void {
+  const state = loadState(repo);
+  state.decisions ??= {};
+  state.decisions[String(pr)] = rec;
+  saveState(repo, state);
+}
+
+export function clearDecision(repo: string, pr: number): void {
+  const state = loadState(repo);
+  if (state.decisions?.[String(pr)]) {
+    delete state.decisions[String(pr)];
+    saveState(repo, state);
+  }
+}
+
+// --- Last verdict (re-review context) ---
+
+export function getLastVerdict(repo: string, pr: number): LastVerdict | null {
+  return loadState(repo).lastVerdicts?.[String(pr)] ?? null;
+}
+
+export function setLastVerdict(repo: string, pr: number, rec: LastVerdict): void {
+  const state = loadState(repo);
+  state.lastVerdicts ??= {};
+  state.lastVerdicts[String(pr)] = rec;
+  saveState(repo, state);
+}
+
+export function setLastVerdictAnswer(repo: string, pr: number, answer: string): void {
+  const state = loadState(repo);
+  const rec = state.lastVerdicts?.[String(pr)];
+  if (rec) {
+    rec.answer = answer;
+    saveState(repo, state);
+  }
+}
+
+export function clearLastVerdict(repo: string, pr: number): void {
+  const state = loadState(repo);
+  if (state.lastVerdicts?.[String(pr)]) {
+    delete state.lastVerdicts[String(pr)];
+    saveState(repo, state);
+  }
+}
+
+// --- Rework rounds (review-trickle alarm) ---
+
+/** Bump the REQUEST_CHANGES round counter for a PR; returns the new count. */
+export function bumpReworkRound(repo: string, pr: number): number {
+  const state = loadState(repo);
+  state.reworkRounds ??= {};
+  const next = (state.reworkRounds[String(pr)] ?? 0) + 1;
+  state.reworkRounds[String(pr)] = next;
+  saveState(repo, state);
+  return next;
+}
+
+export function clearReworkRound(repo: string, pr: number): void {
+  const state = loadState(repo);
+  if (state.reworkRounds?.[String(pr)]) {
+    delete state.reworkRounds[String(pr)];
+    saveState(repo, state);
+  }
 }
 
 /** Bump the failed-verify counter for (pr, sha); returns the new count. */
@@ -238,4 +332,13 @@ export function markReviewed(repo: string, pr: number, sha: string): void {
   const reviewed = loadReviewed(repo);
   reviewed[String(pr)] = sha;
   writeJson(reviewedPath(repo), reviewed);
+}
+
+/** Forget the reviewed SHA for a PR → the next tick re-verifies it (e.g. after a decision answer). */
+export function unmarkReviewed(repo: string, pr: number): void {
+  const reviewed = loadReviewed(repo);
+  if (String(pr) in reviewed) {
+    delete reviewed[String(pr)];
+    writeJson(reviewedPath(repo), reviewed);
+  }
 }

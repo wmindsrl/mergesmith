@@ -227,6 +227,7 @@ has a default.
 | `verifier.provider` | The engine that reviews. **Required.** One of `claude-code`, `cursor-agent`. |
 | `verifier.command` | Review command the verifier runs. A slash command name (e.g. `/mergesmith-validate-pr`) or a Markdown path. **Do not** include `claude -p` / `agent -p` — the provider prepends the runner. |
 | `verifier.model` | Model override for the review (`opus`, `sonnet`, … for claude-code; a Cursor model for cursor-agent). |
+| `verifier.reworkModel` | Faster model for **re-reviews** (round ≥ 2, scoped to the previous verdict's blockers + the delta). Falls back to `verifier.model`. Env override: `MERGESMITH_VERIFIER_REWORK_MODEL`. |
 | `verifier.apiKeyEnv` | Env var for the Cursor key when `provider` is `cursor-agent`. Defaults to `implementer.apiKeyEnv`. |
 | `github.tokenEnv` | Env var holding the bot's GitHub token (Write scope, no admin bypass). Default `GH_TOKEN_MERGESMITH`. |
 | `contract.appendix` | Path to the repo's contract appendix, appended to every dispatch so the implementer follows house rules. Default `docs/agents/CONTRACT.md`. |
@@ -245,10 +246,26 @@ process environment, falling back to a local `.env.local` in the repo root.
 | `claude-code` (default) | `claude -p "<command> <pr>" --permission-mode acceptEdits` | A Claude Code slash command resolved from `.claude/commands/` (e.g. `/mergesmith-validate-pr`). Model via `--model` — `opus`, `sonnet`, `haiku`, `fable`. |
 | `cursor-agent` (alias `cursor`) | `agent -p "<prompt>"` (Cursor Composer as reviewer) | The command resolves to a Markdown file under `.cursor/commands/` (fallback `.claude/commands/`); its frontmatter is stripped and the body is used as the prompt. Uses `verifier.apiKeyEnv` (defaults to the implementer's `CURSOR_API_KEY`). |
 
-Both engines run in a fresh headless session and write `mergesmith-verdict.json` in the repo root,
-which the orchestrator reads back, validates, and acts on. Switch engines by changing
+Both engines run in a fresh headless session and write `mergesmith-verdict-<pr>.json` in the repo
+root, which the orchestrator reads back, validates, and acts on. Switch engines by changing
 `verifier.provider`; switch models with `mergesmith verify-model <model>` (or the
 `MERGESMITH_VERIFIER_MODEL` env override).
+
+### Review rounds are cheap by design
+
+- **First review = exhaustive.** The command requires ALL blocking items in round 1 — trickling a
+  new blocker per round is treated as a review defect.
+- **Re-reviews are delta-scoped.** From round 2 the orchestrator hands the verifier the previous
+  verdict (`mergesmith-rereview-<pr>.json`): it judges only whether the blockers were resolved and
+  whether the delta introduced regressions — on the faster `verifier.reworkModel` when configured.
+- **Choices go to the human, not to the loop.** When the blocker is a decision (a workaround the
+  implementer used, an architectural fork not derivable from the spec), the verifier emits
+  `NEEDS_DECISION` with **one question** (yes/no, or 2-4 options with one recommended). Mergesmith
+  posts it as a PR comment, pings the owner on Slack (state emoji ❓), and parks the PR — no verify,
+  no follow-ups. The owner replies with a comment on the PR (`sì`, `no`, `A`, or free text); the
+  next tick picks the answer up, re-verifies with it as **binding** context, and the loop resumes
+  by itself. From the 3rd REQUEST_CHANGES round on the same PR, Slack pings the owner (trickle
+  alarm): one human decision is usually cheaper than another 40-minute round.
 
 ---
 

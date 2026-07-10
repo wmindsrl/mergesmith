@@ -5,7 +5,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadEnvVar } from '../lib.js';
 import type { Verdict, VerifierProvider, VerifyInput } from './types.js';
-import { readVerdict, verdictPath } from './verdict.js';
+import { readVerdict, verdictPath, writeRereviewContext } from './verdict.js';
 
 const DEFAULT_TIMEOUT_MS = 1_800_000; // 30 min
 
@@ -36,6 +36,8 @@ export function createCursorAgentProvider(opts: {
   command: string;
   repo: string;
   model?: string;
+  /** Faster model for re-reviews (scoped to previous blockers + delta). Falls back to `model`. */
+  reworkModel?: string;
   apiKeyEnv?: string;
   timeoutMs?: number;
 }): VerifierProvider {
@@ -65,9 +67,14 @@ export function createCursorAgentProvider(opts: {
       const out = verdictPath(cwd);
       if (existsSync(out)) rmSync(out);
 
+      // Re-review: same file convention as claude-code — the command reads the context file
+      // from the repo root and scopes itself to previous blockers + delta.
+      const cleanup = input.rereview ? writeRereviewContext(cwd, input.prNumber, input.rereview) : null;
+      const model = input.rereview ? (opts.reworkModel ?? opts.model) : opts.model;
+
       const prompt = resolveCommandPrompt(opts.command, input.prNumber, cwd);
       const args = ['-p', prompt];
-      if (opts.model) args.push('--model', opts.model);
+      if (model) args.push('--model', model);
 
       const env = { ...process.env, CURSOR_API_KEY: loadEnvVar(apiKeyEnv) };
       try {
@@ -79,9 +86,11 @@ export function createCursorAgentProvider(opts: {
         });
       } catch (error) {
         throw new Error(`verifier cursor-agent: sessione fallita per PR #${input.prNumber}: ${String(error)}`);
+      } finally {
+        cleanup?.();
       }
 
-      return readVerdict(cwd, input.prNumber, 'cursor-agent', opts.model);
+      return readVerdict(cwd, input.prNumber, 'cursor-agent', model);
     },
 
     async synthesize(prompt: string): Promise<string> {

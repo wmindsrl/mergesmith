@@ -5,6 +5,17 @@ All notable changes to `@wmind/mergesmith` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-07-10
+
+### Added
+- **`NEEDS_DECISION`: le scelte vanno all'owner, non al loop.** Quando il blocco è una decisione (workaround usato dall'implementer, fork architetturale non derivabile dalla spec), il verifier emette `NEEDS_DECISION` con **una domanda alla volta** — sì/no oppure 2-4 opzioni con una `recommended`. L'orchestratore posta la domanda come commento sulla PR, pinga l'owner su Slack (emoji di stato ❓) e parcheggia la PR; la **prima risposta umana come commento** sblocca tutto: re-verify immediata con la risposta come contesto **vincolante**, e il loop riprende da solo. Validazione fail-closed del verdetto (NEEDS_DECISION senza domanda ben formata → rifiutato).
+- **Re-review sul delta.** Dal round 2 il verifier riceve il verdetto precedente (`mergesmith-rereview-<pr>.json`): giudica SOLO se i blocchi precedenti sono risolti e se il delta introduce regressioni — mai scoperte nuove fuori dal delta. Nuova chiave config **`verifier.reworkModel`** (fallback su `model`, env `MERGESMITH_VERIFIER_REWORK_MODEL`): le re-review girano su un modello più veloce.
+- **Allarme trickle.** Contatore dei round REQUEST_CHANGES per PR: dal 3° round il messaggio Slack pinga l'owner — una decisione umana costa meno di un altro round da ~40 minuti.
+
+### Changed
+- **Review più leggera (contratto + comando).** Il default per codice funzionante e conforme alla spec è APPROVE-con-commenti: stile, naming, refactor minori ed edge case ipotetici non sono MAI bloccanti; i test sono richiesti solo su logica nuova non banale. La prima review deve essere **esaustiva** (tutti i blocchi al round 1 — il trickle è un difetto della review).
+- Il comando `validate-pr` shipped è allineato al formato per-PR del verdict (`mergesmith-verdict-<pr>.json` + campo `pr`).
+
 ## [0.5.5] — 2026-07-10
 
 ### Fixed

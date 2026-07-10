@@ -55,3 +55,69 @@ test('readVerdict: missing file throws', () => {
     assert.throws(() => readVerdict(dir, 7, 'claude-code'), /nessun verdetto/);
   });
 });
+
+// --- NEEDS_DECISION (una domanda al code-owner) ---
+
+test('readVerdict: NEEDS_DECISION valida con domanda sì/no', () => {
+  const v = JSON.stringify({
+    decision: 'NEEDS_DECISION',
+    criticalPathHit: false,
+    rationale: 'workaround su bug esterno',
+    comments: [],
+    question: { text: 'Il workaround X è accettabile in attesa del fix upstream?' },
+  });
+  withVerdict(v, (dir) => {
+    const verdict = readVerdict(dir, 7, 'claude-code', 'opus');
+    assert.equal(verdict.decision, 'NEEDS_DECISION');
+    assert.equal(verdict.question?.text.includes('workaround X'), true);
+  });
+});
+
+test('readVerdict: NEEDS_DECISION con 2-4 opzioni (una recommended)', () => {
+  const v = JSON.stringify({
+    decision: 'NEEDS_DECISION',
+    criticalPathHit: false,
+    rationale: 'scelta di persistenza',
+    comments: [],
+    question: {
+      text: 'Dove salviamo lo stato di sync?',
+      options: [
+        { key: 'A', label: 'tabella dedicata', recommended: true },
+        { key: 'B', label: 'colonna JSON su preferences' },
+      ],
+    },
+  });
+  withVerdict(v, (dir) => {
+    const verdict = readVerdict(dir, 7, 'claude-code');
+    assert.equal(verdict.question?.options?.length, 2);
+    assert.equal(verdict.question?.options?.[0]?.recommended, true);
+  });
+});
+
+test('readVerdict: FAIL-CLOSED su NEEDS_DECISION senza question', () => {
+  const v = JSON.stringify({ decision: 'NEEDS_DECISION', criticalPathHit: false, rationale: 'x', comments: [] });
+  withVerdict(v, (dir) => {
+    assert.throws(() => readVerdict(dir, 7, 'claude-code'), /question/);
+  });
+});
+
+test('readVerdict: FAIL-CLOSED su options malformate (1 sola / senza label)', () => {
+  const one = JSON.stringify({
+    decision: 'NEEDS_DECISION',
+    criticalPathHit: false,
+    rationale: 'x',
+    question: { text: 'q?', options: [{ key: 'A', label: 'solo una' }] },
+  });
+  withVerdict(one, (dir) => {
+    assert.throws(() => readVerdict(dir, 7, 'claude-code'), /options/);
+  });
+  const noLabel = JSON.stringify({
+    decision: 'NEEDS_DECISION',
+    criticalPathHit: false,
+    rationale: 'x',
+    question: { text: 'q?', options: [{ key: 'A' }, { key: 'B', label: 'ok' }] },
+  });
+  withVerdict(noLabel, (dir) => {
+    assert.throws(() => readVerdict(dir, 7, 'claude-code'), /options/);
+  });
+});

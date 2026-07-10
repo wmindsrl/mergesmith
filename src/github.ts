@@ -178,6 +178,43 @@ export function comment(config: MergesmithConfig, pr: number, body: string): voi
   run(config, ['pr', 'comment', String(pr), '--repo', config.repo, '--body', body]);
 }
 
+/** Post a PR comment and return its id (REST, not `gh pr comment`, which prints only the URL). */
+export function commentWithId(config: MergesmithConfig, pr: number, body: string): number {
+  const out = run(
+    config,
+    ['api', '--method', 'POST', `repos/${config.repo}/issues/${pr}/comments`, '-f', `body=${body}`, '--jq', '.id'],
+  );
+  return Number(out);
+}
+
+export interface PrComment {
+  id: number;
+  author: string;
+  body: string;
+  createdAt: string;
+}
+
+/** Issue comments on the PR created at/after `sinceIso`, oldest first. */
+export function commentsSince(config: MergesmithConfig, pr: number, sinceIso: string): PrComment[] {
+  const out = tryRun(config, [
+    'api',
+    `repos/${config.repo}/issues/${pr}/comments?since=${encodeURIComponent(sinceIso)}&per_page=100`,
+    '--jq', '[.[] | {id, author: .user.login, body, createdAt: .created_at}]',
+  ]);
+  if (!out) return [];
+  return JSON.parse(out) as PrComment[];
+}
+
+let cachedBotLogin: string | null | undefined;
+
+/** GitHub login of the automation token (cached per process), or null if unreadable. */
+export function botLogin(config: MergesmithConfig): string | null {
+  if (cachedBotLogin === undefined) {
+    cachedBotLogin = tryRun(config, ['api', 'user', '--jq', '.login']);
+  }
+  return cachedBotLogin;
+}
+
 // ---- Labels (best-effort: never break the loop if a label op fails) ----
 
 // Use the REST API, NOT `gh pr edit --add-label`: the latter goes through GraphQL and
